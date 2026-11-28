@@ -11,6 +11,7 @@ import { formatDay, formatTime } from "@/lib/format";
 import { confirmEntry, confirmImplementation, diagramHtmlUrl, getEntry, getHistory, getWhy, listEntries, listMessages, listRepos, putEntry, requestWorkPackage, updateDiagram } from "@/lib/hub";
 import { useLocale, useT } from "@/lib/i18n";
 import type { Entry, EntryListItem, HistoryItem, ImplementationView, Message, ParagraphBlame, Repo } from "@/lib/types";
+import { hubErrorText } from "@/lib/errorText";
 
 type Tab = "content" | "history" | "why";
 type Props = {
@@ -24,8 +25,6 @@ type Props = {
   /** Opens another entry in the knowledge column (work package requirement links and markers). */
   onOpenEntry?: (entryId: string) => void;
 };
-
-const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Work packages (`W-n`) have their own detail with tabs for spec and plan; every other entry uses the common one. */
 export function EntryDetail(props: Props) {
@@ -65,12 +64,12 @@ function PlainEntryDetail({ workspaceId, entryId, onClose, onJumpToMessage, refr
       setWhy(w);
       setError(null);
     } catch (err) {
-      if (mine === seq.current) setError(errMsg(err));
+      if (mine === seq.current) setError(hubErrorText(err, t));
     }
     // Context for source text and resolved-question styling; the detail still works without it.
     void listMessages(workspaceId).then((l) => setMessages(new Map(l.map((m) => [m.id, m]))), () => {});
     void listEntries(workspaceId).then((l) => setStatuses(new Map(l.map((x) => [x.id, x.status]))), () => {});
-  }, [workspaceId, entryId]);
+  }, [workspaceId, entryId, t]);
 
   // A diagram names its repo by id; the label is looked up for display.
   const [repos, setRepos] = useState<Repo[]>([]);
@@ -117,7 +116,7 @@ function PlainEntryDetail({ workspaceId, entryId, onClose, onJumpToMessage, refr
       await confirmEntry(workspaceId, entryId);
       await load();
     } catch (err) {
-      setError(errMsg(err));
+      setError(hubErrorText(err, t));
     } finally {
       setConfirming(false);
     }
@@ -269,7 +268,7 @@ function GenerateWorkPackage({ workspaceId, entryId }: { workspaceId: string; en
       const wp = await requestWorkPackage(workspaceId, [entryId]);
       setRequested(wp.id);
     } catch (e) {
-      setFailure(errMsg(e));
+      setFailure(hubErrorText(e, t));
     } finally {
       setBusy(false);
     }
@@ -307,7 +306,7 @@ function ImplementationBox({ workspaceId, entryId, implementation, onJumpToMessa
       await confirmImplementation(workspaceId, entryId);
       await onConfirmed();
     } catch (e) {
-      setFailure(errMsg(e));
+      setFailure(hubErrorText(e, t));
     } finally {
       setBusy(false);
     }
@@ -358,7 +357,7 @@ function DiagramContent({ workspaceId, entry, diagram, repos }: { workspaceId: s
       await updateDiagram(workspaceId, entry.id);
       setState("queued");
     } catch (e) {
-      setFailure(errMsg(e));
+      setFailure(hubErrorText(e, t));
       setState("idle");
     }
   }
@@ -426,7 +425,7 @@ function EditForm({ entry, workspaceId, onCancel, onSaved }: { entry: Entry; wor
       });
       await onSaved();
     } catch (e) {
-      setFormError(t("edit.saveFailed", { message: errMsg(e) }));
+      setFormError(t("edit.saveFailed", { message: hubErrorText(e, t) }));
       setBusy(false);
     }
   }

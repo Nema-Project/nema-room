@@ -5,6 +5,7 @@ import { formatDay, formatTime } from "@/lib/format";
 import { bindRepo, listRepos, pickDirectory, previewRepo, unbindRepo, updateRepo, type RepoPreview } from "@/lib/hub";
 import { useLocale, useT, type Locale } from "@/lib/i18n";
 import type { Repo } from "@/lib/types";
+import { hubErrorText } from "@/lib/errorText";
 
 function fetchStatus(repo: Repo, t: ReturnType<typeof useT>, locale: Locale): string | null {
   if (!repo.hasOrigin) return t("code.noOrigin");
@@ -27,7 +28,7 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
 
   useEffect(() => {
     let cancel = false;
-    const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
+    const message = (err: unknown) => (hubErrorText(err, t));
     listRepos(workspaceId)
       .then((rows) => {
         if (!cancel) setRepos(rows);
@@ -40,7 +41,7 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
     return () => {
       cancel = true;
     };
-  }, [workspaceId]);
+  }, [workspaceId, t]);
 
   async function browse() {
     setPicking(true);
@@ -56,7 +57,7 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
       setLabel(next.label);
     } catch (err) {
       if (replacing) setPreview(null);
-      setFormError(err instanceof Error ? err.message : String(err));
+      setFormError(hubErrorText(err, t));
     } finally {
       setPicking(false);
       setPreviewing(false);
@@ -77,7 +78,7 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
       setLabel("");
       setFormError(null);
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : String(err));
+      setFormError(hubErrorText(err, t));
     }
   }
 
@@ -86,7 +87,7 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
       const next = await updateRepo(workspaceId, repoId, patch);
       setRepos((list) => list?.map((repo) => (repo.id === repoId ? next : repo)) ?? null);
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : String(err));
+      setFormError(hubErrorText(err, t));
       throw err;
     }
   }
@@ -98,7 +99,7 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
       await unbindRepo(workspaceId, repoId);
     } catch (err) {
       setRepos(previous);
-      setFormError(err instanceof Error ? err.message : String(err));
+      setFormError(hubErrorText(err, t));
     }
   }
 

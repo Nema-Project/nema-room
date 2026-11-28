@@ -17,6 +17,7 @@ import { skillLimitLines } from "@/lib/skillLimits";
 import { ExternalSkillsPanel } from "./ExternalSkillsPanel";
 import { McpServerControls, McpServerForm } from "./McpServerPanel";
 import { SkillInstallPanel } from "./SkillInstallPanel";
+import { hubErrorText } from "@/lib/errorText";
 
 /** Where an install was started, so its progress line shows next to that button and nowhere else. */
 type TrackedJob = SkillInstallJob & { origin: "panel" | "list" };
@@ -97,7 +98,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
         applied.current += 1;
         setExtensions((rows) => rows?.map((item) => (item.id === row.id ? row : item)) ?? null);
       })
-      .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => setActionError(hubErrorText(e, t)))
       .finally(() =>
         setPending((ids) => {
           const rest = new Set(ids);
@@ -118,7 +119,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
         applied.current += 1;
         setExtensions((rows) => rows?.map((item) => (item.id === row.id ? row : item)) ?? null);
       })
-      .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => setActionError(hubErrorText(e, t)))
       .finally(() =>
         setPending((ids) => {
           const rest = new Set(ids);
@@ -153,7 +154,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
         setExtensions((rows) => rows?.filter((item) => item.id !== id) ?? null);
       })
       .catch((e: unknown) => {
-        setActionError(e instanceof Error ? e.message : String(e));
+        setActionError(hubErrorText(e, t));
         // The removal can have landed even though the answer did not: a lost reply, or another tab
         // that removed the row first. Ask again, and let a list that no longer has the row clear it.
         // A failed refresh stays quiet so it cannot replace the removal error with a lesser one.
@@ -250,7 +251,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
             .catch((e: unknown) => {
               if (!current()) return;
               // A status read can fail while the install is fine (a slow daemon); say so and keep asking.
-              setActionError(e instanceof Error ? e.message : String(e));
+              setActionError(hubErrorText(e, t));
               poll();
             });
         }, pollMs);
@@ -258,7 +259,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
       poll();
       void refresh();
     },
-    [pollMs, refresh, settle],
+    [pollMs, refresh, settle, t],
   );
 
   const install = (request: { source: string; commit: string; path: string }, id: string) => {
@@ -266,7 +267,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
     hold(id, () =>
       installExtension(request)
         .then((job) => track(job, "panel"))
-        .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e))),
+        .catch((e: unknown) => setActionError(hubErrorText(e, t))),
     );
   };
 
@@ -275,7 +276,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
     hold(id, () =>
       retryExtensionInstall(id)
         .then((job) => track(job, "list"))
-        .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e))),
+        .catch((e: unknown) => setActionError(hubErrorText(e, t))),
     );
   };
 
@@ -287,7 +288,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
       generation.current.set(id, (generation.current.get(id) ?? 0) + 1);
       return cancelExtensionInstall(id)
         .then((job) => track(job, origin))
-        .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e)));
+        .catch((e: unknown) => setActionError(hubErrorText(e, t)));
     });
   };
 
@@ -327,13 +328,13 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
         }
       })
       .catch((e: unknown) => {
-        if (!cancel) setError(e instanceof Error ? e.message : String(e));
+        if (!cancel) setError(hubErrorText(e, t));
       });
     return () => {
       cancel = true;
     };
-    // `track` only changes with `pollMs`, which a page never changes after it mounts.
-  }, [track]);
+    // `track` only changes with `pollMs` and the locale; a re-read after a language switch is harmless.
+  }, [track, t]);
 
   // Present records are "installed" (a failed install stays here with its reason and Retry); a record
   // whose install was cancelled has nothing on disk, so it belongs with what can be installed.

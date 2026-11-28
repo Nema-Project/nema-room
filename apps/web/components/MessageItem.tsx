@@ -13,6 +13,7 @@ import { syncMentions } from "@/lib/mentions";
 import { authorLabel, memberName, removedMemberMentions, useWorkspaceRoster } from "@/lib/members";
 import { useHubEvents } from "@/lib/useHubEvents";
 import type { AgentMessageMeta, Entry, Message, MessageQuote, ReportMessageMeta, RouteDecision } from "@/lib/types";
+import { hubErrorText } from "@/lib/errorText";
 
 export function AgentAvatar() {
   return <div className="av ai">AI</div>;
@@ -378,7 +379,7 @@ function UserMessage({
       setVersions(null);
       setVersionsOpen(false);
     } catch (e) {
-      setEditError(e instanceof HubError && e.status === 409 && e.message === "message is still being processed" ? t("chat.editBusy") : e instanceof Error ? e.message : String(e));
+      setEditError(e instanceof HubError && e.status === 409 && e.message === "message is still being processed" ? t("chat.editBusy") : hubErrorText(e, t));
     }
   }
 

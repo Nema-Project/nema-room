@@ -6,6 +6,7 @@ import { graphifyErrorText } from "@/lib/graphifyText";
 import { HubError, listPlugins, listWorkspacePlugins, updateWorkspacePlugin } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
 import type { PluginCatalogItem, WorkspacePlugin } from "@/lib/types";
+import { hubErrorText } from "@/lib/errorText";
 
 const EXTRA_RULES_MAX = 2000;
 
@@ -26,7 +27,7 @@ export function CodeAndPlugins({ workspaceId, graphOfferSignal }: { workspaceId:
 
   useEffect(() => {
     let cancel = false;
-    const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
+    const message = (err: unknown) => (hubErrorText(err, t));
     listWorkspacePlugins(workspaceId)
       .then((rows) => {
         if (!cancel) setPlugins(rows);
@@ -47,14 +48,14 @@ export function CodeAndPlugins({ workspaceId, graphOfferSignal }: { workspaceId:
     return () => {
       cancel = true;
     };
-  }, [workspaceId]);
+  }, [workspaceId, t]);
 
   async function patchPlugin(pluginId: string, patch: { enabled?: boolean; disabledFunctions?: string[]; settings?: Record<string, unknown> }) {
     try {
       const next = await updateWorkspacePlugin(workspaceId, pluginId, patch);
       setPlugins((list) => list?.map((row) => (row.plugin.id === pluginId ? next : row)) ?? null);
     } catch (err) {
-      setPluginError(err instanceof Error ? err.message : String(err));
+      setPluginError(hubErrorText(err, t));
       throw err;
     }
   }

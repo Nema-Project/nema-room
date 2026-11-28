@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { mcpTargetChanged, secretRefs, type ExtensionRecord, type McpConfig, type McpRecordState, type McpValue } from "@nema/shared";
 import { clearMcpSecret, getMcpServer, getMcpServerStatus, saveMcpServer, setMcpSecret, startMcpServer, stopMcpServer, type McpServerStatus } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
+import { hubErrorText } from "@/lib/errorText";
 
 /** `NAME=value`, `NAME=secret:REF`, `NAME=env:VAR`, one per line; `NAME=value:…` keeps a literal that starts with a prefix. */
 export function parseValueLines(text: string): Record<string, McpValue> {
@@ -93,7 +94,7 @@ export function McpServerForm({ initial, previousSecrets = [], onSaved, onCancel
           ? { transport, command: command.trim(), args: argumentLines(args), ...(cwd.trim() ? { cwd: cwd.trim() } : {}), env: parseValueLines(env) }
           : { transport, url: url.trim(), headers: parseValueLines(headers) };
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(hubErrorText(e, t));
       return;
     }
     setSaving(true);
@@ -101,7 +102,7 @@ export function McpServerForm({ initial, previousSecrets = [], onSaved, onCancel
     // An add is create-only and an edit must-exist, so neither replaces nor revives another tab's change.
     saveMcpServer({ id: id.trim(), name: name.trim(), config, create: !initial })
       .then((record) => onSaved({ ...record, mcp: savedState(config, initial, previousSecrets) }))
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => setError(hubErrorText(e, t)))
       .finally(() => setSaving(false));
   };
 
@@ -188,7 +189,7 @@ function SecretSlot({ id, name, configured, onChanged }: { id: string; name: str
         setValue("");
         onChanged(answer);
       })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => setError(hubErrorText(e, t)))
       .finally(() => setBusy(false));
   };
   return (
@@ -279,7 +280,7 @@ export function McpServerControls({ extension, onChanged }: { extension: Extensi
         apply(status);
         changed.current();
       })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => setError(hubErrorText(e, t)))
       .finally(() => setStarting(false));
   };
 
@@ -292,7 +293,7 @@ export function McpServerControls({ extension, onChanged }: { extension: Extensi
         if (answer && typeof answer === "object" && "connection" in answer) apply(answer as McpServerStatus);
         changed.current();
       })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => setError(hubErrorText(e, t)))
       .finally(() => setBusy(false));
   };
 

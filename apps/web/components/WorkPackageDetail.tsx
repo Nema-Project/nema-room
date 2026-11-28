@@ -6,6 +6,7 @@ import { Markdown } from "@/components/Markdown";
 import { approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, getHistory, getWorkPackage, regenerateWorkPackage, saveWorkPackageDoc } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
 import type { HistoryItem, WorkPackage, WpTask, WpTaskView } from "@/lib/types";
+import { hubErrorText } from "@/lib/errorText";
 
 type Tab = "overview" | "spec" | "plan" | "history";
 type Props = {
@@ -18,8 +19,6 @@ type Props = {
   refreshKey?: number;
   initialTab?: "overview" | "history";
 };
-
-const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
  * A task's status, in the same tag style as a requirement's implementation status. A task the user confirmed
@@ -61,9 +60,9 @@ export function WorkPackageDetail({ workspaceId, entryId, onClose, onJumpToMessa
       setHistory(h);
       setError(null);
     } catch (e) {
-      if (mine === seq.current) setError(errMsg(e));
+      if (mine === seq.current) setError(hubErrorText(e, t));
     }
-  }, [workspaceId, entryId]);
+  }, [workspaceId, entryId, t]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount and refresh: state is set once the requests resolve
@@ -89,7 +88,7 @@ export function WorkPackageDetail({ workspaceId, entryId, onClose, onJumpToMessa
       await fn();
       await load();
     } catch (e) {
-      setActionError(errMsg(e));
+      setActionError(hubErrorText(e, t));
     } finally {
       setBusy(false);
     }

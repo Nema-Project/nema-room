@@ -1,4 +1,4 @@
-import type { AgentMessageMeta, AttachmentView, ComponentFailureReason, GraphifyError, Implementation, KnowledgeLanguage, ReportMessageMeta, ReportPassState, RepoIndexFailureMeta, Thread, UserMessageMeta, WpTask } from "@nema/shared";
+import type { AgentMessageMeta, AttachmentView, CodeParams, CodedText, ComponentFailureReason, GraphifyError, Implementation, KnowledgeLanguage, ReportMessageMeta, ReportPassState, RepoIndexFailureMeta, Thread, UserMessageMeta, WpTask } from "@nema/shared";
 
 export type { AgentMessageMeta, Entry, EntrySummary, Implementation, KnowledgeLanguage, MessageMention, MessageQuote, ReportCheck, ReportMessageMeta, RouteDecision, Thread, ThreadOpenedBy, UpsertEntryInput, UserMessageMeta, WorkPackageMeta, WpTask } from "@nema/shared";
 
@@ -63,7 +63,8 @@ export type HubEvent =
   | { type: "message.updated"; message: Message }
   | { type: "task.updated"; task: Task }
   | { type: "thread.updated"; thread: Thread }
-  | { type: "task.progress"; taskId: string; threadId: string | null; text: string }
+  /** `text` is the fallback; `code`, `params` and `items` let `progressText` localise it (#299 batch 1). */
+  | { type: "task.progress"; taskId: string; threadId: string | null; text: string; code?: string; params?: CodeParams; items?: CodedText[] }
   | { type: "knowledge.changed"; entryId: string }
   | { type: "daemon.status"; connected: boolean }
   | { type: "repo.index"; repoId: string; label: string; status: "running" | "done" | "failed" };
