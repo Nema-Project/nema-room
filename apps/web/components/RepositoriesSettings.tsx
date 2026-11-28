@@ -32,6 +32,10 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
   // Mutations in flight: a reread that resolves while one is pending may return a server list that
   // predates it, so its response is dropped even when it started after the mutation did.
   const pendingMutations = useRef(0);
+  // A list response dropped for the reason above, kept so the list it carried is not lost: when
+  // the initial load answers while a bind is pending, the bind's success handler would otherwise
+  // append the new repo to an empty list and hide every existing repo until another reread.
+  const droppedList = useRef<Repo[] | null>(null);
 
   useEffect(() => {
     let cancel = false;
@@ -39,7 +43,12 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
     const message = (err: unknown) => (hubErrorText(err, t));
     listRepos(workspaceId)
       .then((rows) => {
-        if (!cancel && mine === seq.current && pendingMutations.current === 0) setRepos(rows);
+        if (cancel || mine !== seq.current) return;
+        if (pendingMutations.current > 0) {
+          droppedList.current = rows;
+          return;
+        }
+        setRepos(rows);
       })
       .catch((err: unknown) => {
         if (cancel || mine !== seq.current) return;
@@ -81,7 +90,11 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
     try {
       const created = await bindRepo(workspaceId, { path: preview.root, label: trimmedLabel, mainBranch: preview.defaultBranch });
       seq.current += 1;
-      setRepos((list) => [...(list ?? []), created]);
+      // The initial load may have answered while this bind was pending; merge its rows instead
+      // of appending to an empty list.
+      const stashed = droppedList.current;
+      droppedList.current = null;
+      setRepos((list) => [...(list ?? stashed ?? []), created]);
       // Binding starts the repository's graph build: the first real Graphify call, so the offer may open here.
       onRepoBound();
       setPreview(null);
@@ -91,6 +104,12 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
       setFormError(hubErrorText(err, t));
     } finally {
       pendingMutations.current -= 1;
+      // A failed bind must not leave the list empty when the initial load already answered.
+      if (droppedList.current !== null) {
+        const stashed = droppedList.current;
+        droppedList.current = null;
+        setRepos((list) => list ?? stashed);
+      }
     }
   }
 

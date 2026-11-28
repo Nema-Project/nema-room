@@ -114,6 +114,41 @@ describe("RepositoriesSettings", () => {
     expect(screen.getByText("/real/app")).toBeTruthy();
   });
 
+  it("keeps the initial list when it resolves while a bind is pending", async () => {
+    const existing = repo({ id: "r0", path: "/tmp/existing", label: "existing" });
+    const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });
+    let resolveList!: (rows: Repo[]) => void;
+    vi.mocked(hub.listRepos).mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveList = resolve; }));
+    let resolveBind!: (value: Repo) => void;
+    vi.mocked(hub.bindRepo).mockImplementationOnce(() => new Promise<Repo>((resolve) => { resolveBind = resolve; }));
+    mount();
+    await screen.findByRole("button", { name: "Add repository" });
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    // The initial load answers while the bind is still pending: its rows must survive the bind.
+    await act(async () => { resolveList([existing]); });
+    expect(screen.queryByText("/tmp/existing")).toBeNull();
+    await act(async () => { resolveBind(created); });
+    expect(await screen.findByText("/tmp/existing")).toBeTruthy();
+    expect(screen.getByText("/real/app")).toBeTruthy();
+  });
+
+  it("shows the initial list when it resolves while a bind fails", async () => {
+    const existing = repo({ id: "r0", path: "/tmp/existing", label: "existing" });
+    let resolveList!: (rows: Repo[]) => void;
+    vi.mocked(hub.listRepos).mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveList = resolve; }));
+    let rejectBind!: (err: Error) => void;
+    vi.mocked(hub.bindRepo).mockImplementationOnce(() => new Promise<Repo>((_resolve, reject) => { rejectBind = reject; }));
+    mount();
+    await screen.findByRole("button", { name: "Add repository" });
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    await act(async () => { resolveList([existing]); });
+    await act(async () => { rejectBind(new Error("bind boom")); });
+    expect(await screen.findByText("/tmp/existing")).toBeTruthy();
+    expect((await screen.findByRole("alert")).textContent).toBe("bind boom");
+  });
+
   it("keeps the loaded list when a locale reread fails", async () => {
     vi.mocked(hub.listRepos).mockResolvedValue([repo({ id: "r1", path: "/tmp/app", label: "app" })]);
     render(
