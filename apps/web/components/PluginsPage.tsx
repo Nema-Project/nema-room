@@ -322,14 +322,18 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
       .then((rows) => {
         if (cancel || applied.current !== seen) return;
         setExtensions(rows);
+        setError(null);
         // An install started before this page opened is still the daemon's; follow it from here.
         // Keep the origin a panel start already recorded, so a language switch does not hide its
         // progress and Cancel behind the list origin.
         for (const row of rows) {
           if (row.provision !== "managed" || row.installState !== "installing") continue;
+          // A cancel (or another install) while this read is in flight advances the generation;
+          // a stale "running" answer arriving after it must not revive the job.
+          const started = generation.current.get(row.id) ?? 0;
           getExtensionInstall(row.id)
             .then((job) => {
-              if (!cancel) track(job, jobsRef.current[row.id]?.origin ?? "list");
+              if (!cancel && (generation.current.get(row.id) ?? 0) === started) track(job, jobsRef.current[row.id]?.origin ?? "list");
             })
             .catch(() => {});
         }

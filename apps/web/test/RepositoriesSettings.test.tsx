@@ -306,7 +306,7 @@ describe("RepositoriesSettings", () => {
     expect(hub.unbindRepo).toHaveBeenCalledWith("w1", "r1");
   });
 
-  it("does not restore a removed row when the reread answers after the unbind", async () => {
+  it("does not restore a removed repo when the reread answers after the unbind", async () => {
     const existing = repo({ id: "r1", path: "/tmp/app", label: "app" });
     vi.mocked(hub.listRepos).mockResolvedValue([existing]);
     let resolveUnbind!: (value: undefined) => void;
@@ -327,6 +327,39 @@ describe("RepositoriesSettings", () => {
     expect(screen.queryByText("/tmp/app")).toBeNull();
     await act(async () => { resolveList([existing]); });
     expect(screen.queryByText("/tmp/app")).toBeNull();
+  });
+
+  it("does not restore a removed repo when a bind merges a list stashed during its unbind", async () => {
+    const removed = repo({ id: "r0", path: "/tmp/removed", label: "removed" });
+    const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });
+    vi.mocked(hub.listRepos).mockResolvedValue([removed]);
+    let resolveBind!: (value: Repo) => void;
+    vi.mocked(hub.bindRepo).mockImplementationOnce(() => new Promise<Repo>((resolve) => { resolveBind = resolve; }));
+    let resolveUnbind!: (value: undefined) => void;
+    vi.mocked(hub.unbindRepo).mockImplementationOnce(() => new Promise<undefined>((resolve) => { resolveUnbind = resolve; }));
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <RepositoriesSettings workspaceId="w1" onRepoBound={vi.fn()} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("/tmp/removed")).toBeTruthy();
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    // Remove the existing repo while the bind is still pending.
+    await userEvent.click(screen.getByRole("button", { name: "Delete /tmp/removed" }));
+    expect(screen.queryByText("/tmp/removed")).toBeNull();
+    // A locale reread answers while the unbind is pending; the server still lists the repo.
+    let resolveReread!: (rows: Repo[]) => void;
+    vi.mocked(hub.listRepos).mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveReread = resolve; }));
+    await userEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    await act(async () => { resolveReread([removed]); });
+    expect(screen.queryByText("/tmp/removed")).toBeNull();
+    // The unbind succeeds first, then the bind: the removed repo must not come back.
+    await act(async () => { resolveUnbind(undefined); });
+    await act(async () => { resolveBind(created); });
+    expect(await screen.findByText("/real/app")).toBeTruthy();
+    expect(screen.queryByText("/tmp/removed")).toBeNull();
   });
 
   it("asks for another name when the suggested label is taken and ignores a cancelled pick", async () => {

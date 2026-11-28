@@ -190,6 +190,11 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
     setRepos((list) => list?.filter((repo) => repo.id !== repoId) ?? null);
     try {
       await unbindRepo(workspaceId, repoId);
+      // A reread stashed while this unbind was pending may still carry the removed repo:
+      // drop it from the stash so a later bind merge (or a failed-bind fallback) cannot restore it.
+      if (droppedList.current !== null) {
+        droppedList.current = droppedList.current.filter((row) => row.id !== repoId);
+      }
       // A reread started while the unbind was pending may still return the old server list.
       seq.current += 1;
     } catch (err) {
