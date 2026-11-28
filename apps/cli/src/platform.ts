@@ -22,17 +22,33 @@ export function windowsRuntimeEnv(parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv 
   return env;
 }
 
+/**
+ * The paths a command name may resolve to, in lookup order. On Windows these are exactly the candidates
+ * `commandSpec` walks (case-insensitive `Path`, `;`-separated, `.exe .com .cmd .bat` then the bare name). On
+ * POSIX `commandSpec` leaves the lookup to the OS, so this is the plain `PATH` walk `execvp` does: each
+ * non-empty directory, no extensions, and a name with a slash is taken as given.
+ */
+export function commandPathCandidates(bin: string, env: NodeJS.ProcessEnv = process.env, platform = process.platform): string[] {
+  const searchPath = Object.entries(env).find(([key]) => platform === "win32" ? key.toLowerCase() === "path" : key === "PATH")?.[1] ?? "";
+  if (platform !== "win32") {
+    if (bin.includes("/")) return [bin];
+    return searchPath.split(":").filter((dir) => dir !== "").map((dir) => path.posix.join(dir, bin));
+  }
+  const p = path.win32;
+  const dirs = p.isAbsolute(bin) || /[/\\]/.test(bin) ? [""] : searchPath.split(";");
+  const extensions = p.extname(bin) ? [""] : [".exe", ".com", ".cmd", ".bat", ""];
+  const candidates: string[] = [];
+  for (const dir of dirs) for (const ext of extensions) candidates.push(dir ? p.join(dir, bin + ext) : bin + ext);
+  return candidates;
+}
+
 /** Resolve native executables and npm JS shims without passing arguments through cmd.exe. */
 export function commandSpec(bin: string, args: string[], env: NodeJS.ProcessEnv = process.env, platform = process.platform): { bin: string; args: string[] } {
   if (/\.[cm]?js$/i.test(bin) && existsSync(bin)) return { bin: process.execPath, args: [bin, ...args] };
   if (platform === "win32" && !path.extname(bin) && existsSync(bin) && /^#![^\r\n]*\bnode\b/.test(readFileSync(bin, "utf8").slice(0, 256))) return { bin: process.execPath, args: [bin, ...args] };
   if (platform !== "win32") return { bin, args };
   const p = path.win32;
-  const searchPath = Object.entries(env).find(([key]) => key.toLowerCase() === "path")?.[1] ?? "";
-  const dirs = p.isAbsolute(bin) || /[/\\]/.test(bin) ? [""] : searchPath.split(";");
-  const extensions = p.extname(bin) ? [""] : [".exe", ".com", ".cmd", ".bat", ""];
-  for (const dir of dirs) for (const ext of extensions) {
-    const candidate = dir ? p.join(dir, bin + ext) : bin + ext;
+  for (const candidate of commandPathCandidates(bin, env, platform)) {
     if (!existsSync(candidate)) continue;
     const candidateExt = p.extname(candidate);
     if (/\.(?:[cm]?js)$/i.test(candidateExt)) return { bin: process.execPath, args: [candidate, ...args] };
