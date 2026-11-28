@@ -2,7 +2,7 @@ import { Readable } from "node:stream";
 import { Hono, type Context } from "hono";
 import { AttachmentCapabilitiesSchema, isUnknownRpcMethodError, type AttachmentView } from "@nema/shared";
 import { AttachmentCleanupError, AttachmentError, type AttachmentStore } from "./attachments.js";
-import { DAEMON_NOT_CONNECTED, DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
+import { DAEMON_NOT_CONNECTED, DaemonRpcError, daemonErrorBody, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import type { EventBus } from "./events.js";
 import { getMessage } from "./messages.js";
@@ -115,7 +115,7 @@ export function attachmentRoutes(deps: AttachmentRouteDeps): Hono {
   });
 
   app.get("/daemon/attachment-capabilities", async (c) => {
-    if (!deps.daemonStatus()) return c.json({ error: DAEMON_NOT_CONNECTED }, 503);
+    if (!deps.daemonStatus()) return c.json(daemonErrorBody(new DaemonRpcError(DAEMON_NOT_CONNECTED)), 503);
     let result: unknown;
     try {
       result = await deps.daemon.call("attachments.capabilities", {});
@@ -123,7 +123,7 @@ export function attachmentRoutes(deps: AttachmentRouteDeps): Hono {
       if (!(e instanceof DaemonRpcError)) throw e;
       // A daemon from before attachments: the composer treats this like "no attachment support".
       if (isUnknownRpcMethodError(e.message)) return c.json({ error: "the connected daemon does not support attachments" }, 501);
-      return c.json({ error: e.message }, daemonHttpStatus(e.message));
+      return c.json(daemonErrorBody(e), daemonHttpStatus(e.message));
     }
     const parsed = AttachmentCapabilitiesSchema.safeParse(result);
     if (!parsed.success) return c.json({ error: "the daemon returned malformed attachment capabilities" }, 502);

@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { MIRROR_URL_ERROR } from "@nema/shared";
+import { CodedError, DAEMON_ERROR, MIRROR_URL_ERROR } from "@nema/shared";
 import { protectPrivatePath } from "./secrets/permissions.js";
 
 export const DEFAULT_BYOK_BASE_URL = "https://api.openai.com/v1";
@@ -34,10 +34,10 @@ export function normalizeMirrorUrl(raw: string): string {
   try {
     url = new URL(raw);
   } catch {
-    throw new Error(MIRROR_URL_ERROR);
+    throw new CodedError(DAEMON_ERROR.mirrorUrlInvalid, MIRROR_URL_ERROR);
   }
   if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username !== "" || url.password !== "" || raw.includes("?") || raw.includes("#") || raw !== raw.trim()) {
-    throw new Error(MIRROR_URL_ERROR);
+    throw new CodedError(DAEMON_ERROR.mirrorUrlInvalid, MIRROR_URL_ERROR);
   }
   return raw.replace(/\/+$/, "");
 }

@@ -16,6 +16,7 @@ import { useSkillRows } from "@/lib/skillMenu";
 import { skillLimitLines } from "@/lib/skillLimits";
 import { useT } from "@/lib/i18n";
 import type { Message } from "@/lib/types";
+import { hubErrorText } from "@/lib/errorText";
 
 function excerpt(content: string): string {
   const chars = Array.from(content);
@@ -181,7 +182,7 @@ export function Composer({
         setChips(cur => [...cur, ...expanded.mentions.map(mention => ({ mention, label: mention.text }))]);
         place(text.slice(0, current.start) + insert + text.slice(current.end), current.start + insert.length);
         setMentionActive(0);
-      } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+      } catch (error) { setError(hubErrorText(error, t)); }
       return;
     }
     // A message carries at most MENTION_LIMITS.perMessage mentions; refuse the extra one instead of failing the send.
@@ -266,7 +267,7 @@ export function Composer({
       // it is the next message's choice, not this one's.
       setAccountId((cur) => (cur === chosen ? null : cur));
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e)); // keep the draft
+      setError(hubErrorText(e, t)); // keep the draft
     } finally {
       setSending(false);
     }

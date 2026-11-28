@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { RouteDecision, TaskAssign, TaskEvent } from "@nema/shared";
+import { PROGRESS, type RouteDecision, type TaskAssign, type TaskEvent } from "@nema/shared";
 import { attachmentCapabilities, refusal } from "../attachments/capabilities.js";
 import { attachmentLabel, attachmentPreamble, textAttachmentBlock } from "../attachments/blocks.js";
 import { loadTaskAttachments, type LoadedAttachment } from "../attachments/fetch.js";
@@ -200,7 +200,7 @@ class AccountPlan {
           // The guard is told before the request is made, not after: the very next call is already on the new
           // account and must not carry the old account's ciphertext.
           this.guard.switched();
-          o.onEvent({ type: "progress", text: switchMessage(from.account, to.account, failure) });
+          o.onEvent(switchEvent(from.account, to.account, failure));
         },
       });
     // The router starts on the account that was routed: `autoRoute` builds the candidate list with the chosen
@@ -294,10 +294,11 @@ class AccountPlan {
 /**
  * The progress line for a switch, naming both accounts and what made the task move.
  *
- * It is a sentence rather than a code because it is shown while the task runs, where there is no metadata to
- * expand. The reason comes from the same classification that allowed the switch, so the two cannot disagree.
+ * The text is the fallback for a hub or page that cannot localise it; the code carries the same facts, and its
+ * `reason` is the `RouteFailure` itself, which the web already renders as `route.failure.<reason>` (#299 batch 1).
+ * The reason comes from the same classification that allowed the switch, so the two cannot disagree.
  */
-function switchMessage(from: Account, to: Account, failure: RouteFailure): string {
+function switchEvent(from: Account, to: Account, failure: RouteFailure): TaskEvent {
   const why = failure === "rate_limit"
     ? "被限流"
     : failure === "quota"
@@ -305,7 +306,8 @@ function switchMessage(from: Account, to: Account, failure: RouteFailure): strin
       : failure === "context"
         ? "上下文超出窗口"
         : "接口出错";
-  return `${accountLabel(from)} ${why}，改用 ${accountLabel(to)}`;
+  const params = { from: accountLabel(from), to: accountLabel(to), reason: failure };
+  return { type: "progress", text: `${params.from} ${why}，改用 ${params.to}`, code: PROGRESS.routeSwitch, params };
 }
 
 export class CodexDirectAdapter implements AgentAdapter {
@@ -508,7 +510,7 @@ export class CodexDirectAdapter implements AgentAdapter {
         ...(skills.reader ? { skills: skills.reader } : {}),
         signal,
         ...(task.limits ? { limits: { ...DEFAULT_LIMITS, maxModelCalls: task.limits.maxModelCalls, maxToolCalls: task.limits.maxToolCalls } } : {}),
-        onProgress: (text) => onEvent({ type: "tool_call", text }),
+        onProgress: (text, coded) => onEvent({ type: "tool_call", text, ...coded }),
         onWrite: () => { sent.wrote = true; },
         // Only after a switch, and only for the reasoning items: the rest of the conversation is unchanged.
         // The loop-level filter: covers the normal case, where the account changed between two loop iterations.
@@ -578,8 +580,8 @@ export class CodexDirectAdapter implements AgentAdapter {
       // report is a warning, never the task's outcome.
       if (skills.reader) {
         const reports = await skills.reader.settleReports(5000);
-        if (reports.timedOut) onEvent({ type: "progress", text: "Skill 激活记录未能及时上报" });
-        else if (reports.failed > 0) onEvent({ type: "progress", text: `${reports.failed} 条 Skill 激活记录上报失败` });
+        if (reports.timedOut) onEvent({ type: "progress", text: "Skill 激活记录未能及时上报", code: PROGRESS.skillsActivationTimedOut });
+        else if (reports.failed > 0) onEvent({ type: "progress", text: `${reports.failed} 条 Skill 激活记录上报失败`, code: PROGRESS.skillsActivationFailed, params: { count: reports.failed } });
       }
     }
     // The record names the account that produced this reply, which after a failover is not the routed one.

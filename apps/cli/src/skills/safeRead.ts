@@ -4,7 +4,9 @@ import path from "node:path";
 
 // Reads inside one Skill directory without following links (spec §2, items 5 and 6). Every check is done
 // again after the file is open, so a swap between the check and the open is caught: the bytes come only
-// from a descriptor whose device and inode match what the walk saw, under parents that did not change.
+// from a descriptor whose device, inode, size and mtime match what the walk saw, under parents that did
+// not change. Device and inode alone are not enough: a file deleted and recreated can reuse the inode,
+// so size and mtime are part of the identity.
 
 export type SafeReadFailure = "outside" | "link" | "not-file" | "too-large" | "changed" | "missing" | "unreadable";
 export type SafeReadResult = { ok: true; bytes: Buffer } | { ok: false; reason: SafeReadFailure };
@@ -23,9 +25,11 @@ export function normalizeSkillPath(raw: string): string | null {
   return parts.length === 0 ? null : parts.join("/");
 }
 
-type Seen = { path: string; dev: number; ino: number };
+type Seen = { path: string; dev: number; ino: number; size: number; mtimeMs: number };
 
-const same = (a: Seen, b: Stats) => a.dev === b.dev && a.ino === b.ino;
+const same = (a: Seen, b: Stats) => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeMs === b.mtimeMs;
+
+const seenOf = (path: string, stat: Stats): Seen => ({ path, dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs });
 
 async function lstatOrNull(p: string): Promise<Stats | null> {
   try {
@@ -71,7 +75,7 @@ async function readChecked(
   if (!rootStat) return { ok: false, reason: "missing" };
   if (rootStat.isSymbolicLink()) return { ok: false, reason: "link" };
   if (!rootStat.isDirectory()) return { ok: false, reason: "not-file" };
-  const chain: Seen[] = [{ path: root, dev: rootStat.dev, ino: rootStat.ino }];
+  const chain: Seen[] = [seenOf(root, rootStat)];
 
   let current = root;
   let last: Stats = rootStat;
@@ -82,11 +86,11 @@ async function readChecked(
     if (stat.isSymbolicLink()) return { ok: false, reason: "link" };
     const isLast = i === segments.length - 1;
     if (isLast ? !stat.isFile() : !stat.isDirectory()) return { ok: false, reason: isLast ? "not-file" : "missing" };
-    if (!isLast) chain.push({ path: current, dev: stat.dev, ino: stat.ino });
+    if (!isLast) chain.push(seenOf(current, stat));
     last = stat;
   }
   if (last.size > maxBytes) return { ok: false, reason: "too-large" };
-  const target: Seen = { path: current, dev: last.dev, ino: last.ino };
+  const target: Seen = seenOf(current, last);
 
   await hooks?.afterCheck?.();
 

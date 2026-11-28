@@ -17,6 +17,7 @@ import { skillLimitLines } from "@/lib/skillLimits";
 import { ExternalSkillsPanel } from "./ExternalSkillsPanel";
 import { McpServerControls, McpServerForm } from "./McpServerPanel";
 import { SkillInstallPanel } from "./SkillInstallPanel";
+import { hubErrorText } from "@/lib/errorText";
 
 /** Where an install was started, so its progress line shows next to that button and nowhere else. */
 type TrackedJob = SkillInstallJob & { origin: "panel" | "list" };
@@ -55,6 +56,11 @@ function matches(extension: ExtensionRecord, type: TypeFilter, query: string): b
 export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onClose?: () => void; embedded?: boolean; pollMs?: number }) {
   const t = useT();
   const [jobs, setJobs] = useState<Record<string, TrackedJob>>({});
+  // The locale re-read below must keep a panel-started install's origin; the ref reads the latest jobs.
+  const jobsRef = useRef(jobs);
+  useEffect(() => {
+    jobsRef.current = jobs;
+  });
   // One polling chain per id. Starting, cancelling or retrying bumps the id's generation, so an answer
   // from an older chain cannot overwrite a newer state.
   const generation = useRef(new Map<string, number>());
@@ -97,7 +103,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
         applied.current += 1;
         setExtensions((rows) => rows?.map((item) => (item.id === row.id ? row : item)) ?? null);
       })
-      .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => setActionError(hubErrorText(e, t)))
       .finally(() =>
         setPending((ids) => {
           const rest = new Set(ids);
@@ -118,7 +124,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
         applied.current += 1;
         setExtensions((rows) => rows?.map((item) => (item.id === row.id ? row : item)) ?? null);
       })
-      .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => setActionError(hubErrorText(e, t)))
       .finally(() =>
         setPending((ids) => {
           const rest = new Set(ids);
@@ -153,7 +159,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
         setExtensions((rows) => rows?.filter((item) => item.id !== id) ?? null);
       })
       .catch((e: unknown) => {
-        setActionError(e instanceof Error ? e.message : String(e));
+        setActionError(hubErrorText(e, t));
         // The removal can have landed even though the answer did not: a lost reply, or another tab
         // that removed the row first. Ask again, and let a list that no longer has the row clear it.
         // A failed refresh stays quiet so it cannot replace the removal error with a lesser one.
@@ -243,14 +249,21 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
           getExtensionInstall(job.id)
             .then((next) => {
               if (!current()) return;
+              if (next.state === "running") {
+                show(next);
+                poll();
+                return;
+              }
+              // A rediscovery read that captured `running` may still be in flight; its answer
+              // must not revive this finished job.
+              generation.current.set(job.id, (generation.current.get(job.id) ?? 0) + 1);
               show(next);
-              if (next.state === "running") poll();
-              else settle(job.id);
+              settle(job.id);
             })
             .catch((e: unknown) => {
               if (!current()) return;
               // A status read can fail while the install is fine (a slow daemon); say so and keep asking.
-              setActionError(e instanceof Error ? e.message : String(e));
+              setActionError(hubErrorText(e, t));
               poll();
             });
         }, pollMs);
@@ -258,7 +271,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
       poll();
       void refresh();
     },
-    [pollMs, refresh, settle],
+    [pollMs, refresh, settle, t],
   );
 
   const install = (request: { source: string; commit: string; path: string }, id: string) => {
@@ -266,7 +279,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
     hold(id, () =>
       installExtension(request)
         .then((job) => track(job, "panel"))
-        .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e))),
+        .catch((e: unknown) => setActionError(hubErrorText(e, t))),
     );
   };
 
@@ -275,7 +288,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
     hold(id, () =>
       retryExtensionInstall(id)
         .then((job) => track(job, "list"))
-        .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e))),
+        .catch((e: unknown) => setActionError(hubErrorText(e, t))),
     );
   };
 
@@ -287,7 +300,7 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
       generation.current.set(id, (generation.current.get(id) ?? 0) + 1);
       return cancelExtensionInstall(id)
         .then((job) => track(job, origin))
-        .catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e)));
+        .catch((e: unknown) => setActionError(hubErrorText(e, t)));
     });
   };
 
@@ -316,24 +329,30 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
       .then((rows) => {
         if (cancel || applied.current !== seen) return;
         setExtensions(rows);
+        setError(null);
         // An install started before this page opened is still the daemon's; follow it from here.
+        // Keep the origin a panel start already recorded, so a language switch does not hide its
+        // progress and Cancel behind the list origin.
         for (const row of rows) {
           if (row.provision !== "managed" || row.installState !== "installing") continue;
+          // A cancel (or another install) while this read is in flight advances the generation;
+          // a stale "running" answer arriving after it must not revive the job.
+          const started = generation.current.get(row.id) ?? 0;
           getExtensionInstall(row.id)
             .then((job) => {
-              if (!cancel) track(job, "list");
+              if (!cancel && (generation.current.get(row.id) ?? 0) === started) track(job, jobsRef.current[row.id]?.origin ?? "list");
             })
             .catch(() => {});
         }
       })
       .catch((e: unknown) => {
-        if (!cancel) setError(e instanceof Error ? e.message : String(e));
+        if (!cancel) setError(hubErrorText(e, t));
       });
     return () => {
       cancel = true;
     };
-    // `track` only changes with `pollMs`, which a page never changes after it mounts.
-  }, [track]);
+    // `track` only changes with `pollMs` and the locale; a re-read after a language switch is harmless.
+  }, [track, t]);
 
   // Present records are "installed" (a failed install stays here with its reason and Retry); a record
   // whose install was cancelled has nothing on disk, so it belongs with what can be installed.

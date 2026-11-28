@@ -474,10 +474,23 @@ describe("daemon socket", () => {
     const progress: unknown[] = [];
     events.subscribe(wsA, (e) => e.type === "task.progress" && progress.push(e));
     c.send({ type: "task.event", taskId: m1.task.id, event: { type: "progress", text: "working" } });
+    // #299 batch 1: a coded line is relayed sanitised; a malformed code costs only the translation.
+    c.send({ type: "task.event", taskId: m1.task.id, event: {
+      type: "progress", text: "部分 Skill 未载入：a", code: "skills.not-loaded",
+      items: [{ text: "a", code: "skill.repo-moved", params: { repo: "a", nested: { x: 1 } } }, { nope: true }],
+    } });
+    c.send({ type: "task.event", taskId: m1.task.id, event: { type: "progress", text: "raw", code: "<b>", params: { x: "1" } } });
     c.send({ type: "task.finished", taskId: m1.task.id, ok: true, reply: "done 1" });
     const a2 = await c.next("task.assign");
     expect(a2.taskId).toBe(m2.task.id);
-    expect(progress).toEqual([{ type: "task.progress", taskId: m1.task.id, text: "working", threadId: null }]);
+    expect(progress).toEqual([
+      { type: "task.progress", taskId: m1.task.id, text: "working", threadId: null },
+      {
+        type: "task.progress", taskId: m1.task.id, text: "部分 Skill 未载入：a", threadId: null,
+        code: "skills.not-loaded", items: [{ text: "a", code: "skill.repo-moved", params: { repo: "a" } }],
+      },
+      { type: "task.progress", taskId: m1.task.id, text: "raw", threadId: null },
+    ]);
     const msgs = await listMessages(db, wsA);
     const agent = msgs.find((m): m is AgentMessage => m.role === "agent")!;
     expect(agent.content).toBe("done 1");

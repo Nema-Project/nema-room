@@ -1,9 +1,9 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RepositoriesSettings } from "@/components/RepositoriesSettings";
 import { formatDay, formatTime } from "@/lib/format";
-import { I18nProvider } from "@/lib/i18n";
+import { I18nProvider, useLocale } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
 import type { Repo } from "@/lib/types";
 
@@ -51,6 +51,12 @@ function mount() {
   );
 }
 
+/** Switches the UI language mid-test, so locale-triggered refetches can be observed. */
+function LocaleSwitcher() {
+  const [, setLocale] = useLocale();
+  return <button onClick={() => setLocale("ja")}>switch locale</button>;
+}
+
 const preview = {
   root: "/real/app",
   defaultBranch: "develop",
@@ -90,6 +96,333 @@ describe("RepositoriesSettings", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("该仓库已绑定到 workspace Alpha");
     expect(screen.getByText("/real/dup")).toBeTruthy();
     expect(hub.previewRepo).toHaveBeenLastCalledWith("w1", "/tmp/dup");
+  });
+
+  it("ignores a stale list response that resolves after a bind", async () => {
+    const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });
+    let resolveList!: (rows: Repo[]) => void;
+    vi.mocked(hub.listRepos).mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveList = resolve; }));
+    vi.mocked(hub.bindRepo).mockResolvedValueOnce(created);
+    mount();
+    await screen.findByRole("button", { name: "Add repository" });
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    expect(hub.bindRepo).toHaveBeenCalledWith("w1", { path: "/real/app", label: "app", mainBranch: "develop" });
+    // The add finished and the preview cleared, so the path below is the bound row, not the preview.
+    expect(await screen.findByText("None selected")).toBeTruthy();
+    await act(async () => { resolveList([]); });
+    expect(screen.getByText("/real/app")).toBeTruthy();
+  });
+
+  it("keeps the initial list when it resolves while a bind is pending", async () => {
+    const existing = repo({ id: "r0", path: "/tmp/existing", label: "existing" });
+    const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });
+    let resolveList!: (rows: Repo[]) => void;
+    vi.mocked(hub.listRepos).mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveList = resolve; }));
+    let resolveBind!: (value: Repo) => void;
+    vi.mocked(hub.bindRepo).mockImplementationOnce(() => new Promise<Repo>((resolve) => { resolveBind = resolve; }));
+    mount();
+    await screen.findByRole("button", { name: "Add repository" });
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    // The initial load answers while the bind is still pending: its rows must survive the bind.
+    await act(async () => { resolveList([existing]); });
+    expect(screen.queryByText("/tmp/existing")).toBeNull();
+    await act(async () => { resolveBind(created); });
+    expect(await screen.findByText("/tmp/existing")).toBeTruthy();
+    expect(screen.getByText("/real/app")).toBeTruthy();
+  });
+
+  it("keeps a reread list stashed during a bind after the first read failed", async () => {
+    const existing = repo({ id: "r0", path: "/tmp/existing", label: "existing" });
+    const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });
+    let resolveReread!: (rows: Repo[]) => void;
+    let resolveBind!: (value: Repo) => void;
+    vi.mocked(hub.listRepos)
+      .mockRejectedValueOnce(new Error("list boom"))
+      .mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveReread = resolve; }));
+    vi.mocked(hub.bindRepo).mockImplementationOnce(() => new Promise<Repo>((resolve) => { resolveBind = resolve; }));
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <RepositoriesSettings workspaceId="w1" onRepoBound={vi.fn()} />
+      </I18nProvider>,
+    );
+    // Wait for the first read to fail: only then is the list the empty placeholder.
+    expect((await screen.findByRole("alert")).textContent).toBe("list boom");
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    // A locale reread answers while the bind is pending, so its rows are stashed.
+    await userEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    await act(async () => { resolveReread([existing]); });
+    expect(screen.queryByText("/tmp/existing")).toBeNull();
+    await act(async () => { resolveBind(created); });
+    expect(await screen.findByText("/tmp/existing")).toBeTruthy();
+    expect(screen.getByText("/real/app")).toBeTruthy();
+    // No extra reload: the stashed rows were merged, so the list is already complete.
+    expect(hub.listRepos).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a reread list stashed during a failed bind after the first read failed", async () => {
+    const existing = repo({ id: "r0", path: "/tmp/existing", label: "existing" });
+    let resolveReread!: (rows: Repo[]) => void;
+    let rejectBind!: (err: Error) => void;
+    vi.mocked(hub.listRepos)
+      .mockRejectedValueOnce(new Error("list boom"))
+      .mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveReread = resolve; }));
+    vi.mocked(hub.bindRepo).mockImplementationOnce(() => new Promise<Repo>((_resolve, reject) => { rejectBind = reject; }));
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <RepositoriesSettings workspaceId="w1" onRepoBound={vi.fn()} />
+      </I18nProvider>,
+    );
+    expect((await screen.findByRole("alert")).textContent).toBe("list boom");
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    await userEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    await act(async () => { resolveReread([existing]); });
+    await act(async () => { rejectBind(new Error("bind boom")); });
+    expect(await screen.findByText("/tmp/existing")).toBeTruthy();
+    expect((await screen.findByRole("alert")).textContent).toBe("bind boom");
+  });
+
+  it("reloads the initial list when the bind succeeds before it answers", async () => {
+    const existing = repo({ id: "r0", path: "/tmp/existing", label: "existing" });
+    const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });
+    let resolveList!: (rows: Repo[]) => void;
+    vi.mocked(hub.listRepos)
+      .mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveList = resolve; }))
+      .mockResolvedValueOnce([existing, created]);
+    vi.mocked(hub.bindRepo).mockResolvedValueOnce(created);
+    mount();
+    await screen.findByRole("button", { name: "Add repository" });
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    expect(await screen.findByText("None selected")).toBeTruthy();
+    // The bind succeeded before the initial load answered, so the component reloads.
+    expect(hub.listRepos).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("/real/app")).toBeTruthy();
+    // The delayed initial response is stale and must not wipe the reloaded list.
+    await act(async () => { resolveList([existing]); });
+    expect(await screen.findByText("/tmp/existing")).toBeTruthy();
+    expect(screen.getByText("/real/app")).toBeTruthy();
+  });
+
+  it("reloads again when an update settles while the first reload is pending", async () => {
+    const existing = repo({ id: "r0", path: "/tmp/existing", label: "existing" });
+    const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });
+    const renamed = repo({ ...created, label: "renamed" });
+    let resolveList!: (rows: Repo[]) => void;
+    let resolveReload!: (rows: Repo[]) => void;
+    vi.mocked(hub.listRepos)
+      .mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveList = resolve; }))
+      .mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveReload = resolve; }))
+      .mockResolvedValueOnce([existing, renamed]);
+    let resolveUpdate!: (value: Repo) => void;
+    vi.mocked(hub.updateRepo).mockImplementationOnce(() => new Promise<Repo>((resolve) => { resolveUpdate = resolve; }));
+    vi.mocked(hub.bindRepo).mockResolvedValueOnce(created);
+    mount();
+    await screen.findByRole("button", { name: "Add repository" });
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    expect(await screen.findByText("/real/app")).toBeTruthy();
+    // The bind succeeded before the initial load answered, so the component reloads.
+    expect(hub.listRepos).toHaveBeenCalledTimes(2);
+    // The new repo is renamed while that reload is still pending.
+    const label = screen.getByRole("textbox", { name: "Label /real/app" });
+    await userEvent.clear(label);
+    await userEvent.type(label, "renamed");
+    await userEvent.tab();
+    expect(hub.updateRepo).toHaveBeenCalledWith("w1", "r1", { label: "renamed" });
+    // The first reload answers during the update: its rows are stashed, not applied.
+    await act(async () => { resolveReload([existing, created]); });
+    expect(screen.queryByText("/tmp/existing")).toBeNull();
+    // Once the update settles, the component reloads again instead of leaving the stash unused.
+    await act(async () => { resolveUpdate(renamed); });
+    expect(hub.listRepos).toHaveBeenCalledTimes(3);
+    expect(await screen.findByText("/tmp/existing")).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: "Label /real/app" }) as HTMLInputElement).value).toBe("renamed");
+    // The delayed initial response is stale and must not wipe the reloaded list.
+    await act(async () => { resolveList([existing]); });
+    expect(screen.getByText("/tmp/existing")).toBeTruthy();
+    expect(screen.getByText("/real/app")).toBeTruthy();
+  });
+
+  it("shows the initial list when it resolves while a bind fails", async () => {
+    const existing = repo({ id: "r0", path: "/tmp/existing", label: "existing" });
+    let resolveList!: (rows: Repo[]) => void;
+    vi.mocked(hub.listRepos).mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveList = resolve; }));
+    let rejectBind!: (err: Error) => void;
+    vi.mocked(hub.bindRepo).mockImplementationOnce(() => new Promise<Repo>((_resolve, reject) => { rejectBind = reject; }));
+    mount();
+    await screen.findByRole("button", { name: "Add repository" });
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    await act(async () => { resolveList([existing]); });
+    await act(async () => { rejectBind(new Error("bind boom")); });
+    expect(await screen.findByText("/tmp/existing")).toBeTruthy();
+    expect((await screen.findByRole("alert")).textContent).toBe("bind boom");
+  });
+
+  it("keeps the loaded list when a locale reread fails", async () => {
+    vi.mocked(hub.listRepos).mockResolvedValue([repo({ id: "r1", path: "/tmp/app", label: "app" })]);
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <RepositoriesSettings workspaceId="w1" onRepoBound={vi.fn()} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("/tmp/app")).toBeTruthy();
+    vi.mocked(hub.listRepos).mockRejectedValue(new Error("list boom"));
+    await userEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toBe("list boom");
+    expect(screen.getByText("/tmp/app")).toBeTruthy();
+  });
+
+  it("does not restore a removed row when the reread answers before the unbind", async () => {
+    const existing = repo({ id: "r1", path: "/tmp/app", label: "app" });
+    vi.mocked(hub.listRepos).mockResolvedValue([existing]);
+    let resolveUnbind!: (value: undefined) => void;
+    vi.mocked(hub.unbindRepo).mockImplementationOnce(() => new Promise<undefined>((resolve) => { resolveUnbind = resolve; }));
+    let resolveList!: (rows: Repo[]) => void;
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <RepositoriesSettings workspaceId="w1" onRepoBound={vi.fn()} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("/tmp/app")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Delete /tmp/app" }));
+    expect(screen.queryByText("/tmp/app")).toBeNull();
+    // A locale change starts a reread while the unbind is pending; the server still lists the repo.
+    vi.mocked(hub.listRepos).mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveList = resolve; }));
+    await userEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    await act(async () => { resolveList([existing]); });
+    expect(screen.queryByText("/tmp/app")).toBeNull();
+    await act(async () => { resolveUnbind(undefined); });
+    expect(screen.queryByText("/tmp/app")).toBeNull();
+    expect(hub.unbindRepo).toHaveBeenCalledWith("w1", "r1");
+  });
+
+  it("does not restore a removed repo when the reread answers after the unbind", async () => {
+    const existing = repo({ id: "r1", path: "/tmp/app", label: "app" });
+    vi.mocked(hub.listRepos).mockResolvedValue([existing]);
+    let resolveUnbind!: (value: undefined) => void;
+    vi.mocked(hub.unbindRepo).mockImplementationOnce(() => new Promise<undefined>((resolve) => { resolveUnbind = resolve; }));
+    let resolveList!: (rows: Repo[]) => void;
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <RepositoriesSettings workspaceId="w1" onRepoBound={vi.fn()} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("/tmp/app")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Delete /tmp/app" }));
+    expect(screen.queryByText("/tmp/app")).toBeNull();
+    vi.mocked(hub.listRepos).mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveList = resolve; }));
+    await userEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    await act(async () => { resolveUnbind(undefined); });
+    expect(screen.queryByText("/tmp/app")).toBeNull();
+    await act(async () => { resolveList([existing]); });
+    expect(screen.queryByText("/tmp/app")).toBeNull();
+  });
+
+  it("does not restore a removed repo when a bind merges a list stashed during its unbind", async () => {
+    const removed = repo({ id: "r0", path: "/tmp/removed", label: "removed" });
+    const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });
+    vi.mocked(hub.listRepos).mockResolvedValue([removed]);
+    let resolveBind!: (value: Repo) => void;
+    vi.mocked(hub.bindRepo).mockImplementationOnce(() => new Promise<Repo>((resolve) => { resolveBind = resolve; }));
+    let resolveUnbind!: (value: undefined) => void;
+    vi.mocked(hub.unbindRepo).mockImplementationOnce(() => new Promise<undefined>((resolve) => { resolveUnbind = resolve; }));
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <RepositoriesSettings workspaceId="w1" onRepoBound={vi.fn()} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("/tmp/removed")).toBeTruthy();
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    // Remove the existing repo while the bind is still pending.
+    await userEvent.click(screen.getByRole("button", { name: "Delete /tmp/removed" }));
+    expect(screen.queryByText("/tmp/removed")).toBeNull();
+    // A locale reread answers while the unbind is pending; the server still lists the repo.
+    let resolveReread!: (rows: Repo[]) => void;
+    vi.mocked(hub.listRepos).mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveReread = resolve; }));
+    await userEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    await act(async () => { resolveReread([removed]); });
+    expect(screen.queryByText("/tmp/removed")).toBeNull();
+    // The unbind succeeds first, then the bind: the removed repo must not come back.
+    await act(async () => { resolveUnbind(undefined); });
+    await act(async () => { resolveBind(created); });
+    expect(await screen.findByText("/real/app")).toBeTruthy();
+    expect(screen.queryByText("/tmp/removed")).toBeNull();
+  });
+
+  it("does not restore a removed repo when a bind resolves before its unbind", async () => {
+    const removed = repo({ id: "r0", path: "/tmp/removed", label: "removed" });
+    const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });
+    vi.mocked(hub.listRepos).mockResolvedValue([removed]);
+    let resolveBind!: (value: Repo) => void;
+    vi.mocked(hub.bindRepo).mockImplementationOnce(() => new Promise<Repo>((resolve) => { resolveBind = resolve; }));
+    let resolveUnbind!: (value: undefined) => void;
+    vi.mocked(hub.unbindRepo).mockImplementationOnce(() => new Promise<undefined>((resolve) => { resolveUnbind = resolve; }));
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <RepositoriesSettings workspaceId="w1" onRepoBound={vi.fn()} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("/tmp/removed")).toBeTruthy();
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    // Remove the existing repo while the bind is still pending.
+    await userEvent.click(screen.getByRole("button", { name: "Delete /tmp/removed" }));
+    expect(screen.queryByText("/tmp/removed")).toBeNull();
+    // A locale reread answers while the unbind is pending; the server still lists the repo.
+    let resolveReread!: (rows: Repo[]) => void;
+    vi.mocked(hub.listRepos).mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveReread = resolve; }));
+    await userEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    await act(async () => { resolveReread([removed]); });
+    expect(screen.queryByText("/tmp/removed")).toBeNull();
+    // The bind succeeds first, then the unbind: the removed repo must not come back.
+    await act(async () => { resolveBind(created); });
+    expect(await screen.findByText("/real/app")).toBeTruthy();
+    expect(screen.queryByText("/tmp/removed")).toBeNull();
+    await act(async () => { resolveUnbind(undefined); });
+    expect(screen.queryByText("/tmp/removed")).toBeNull();
+  });
+
+  it("keeps a bind that settled during a failed unbind and restores only the failed repo", async () => {
+    const removed = repo({ id: "r0", path: "/tmp/removed", label: "removed" });
+    const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });
+    vi.mocked(hub.listRepos).mockResolvedValue([removed]);
+    let resolveBind!: (value: Repo) => void;
+    vi.mocked(hub.bindRepo).mockImplementationOnce(() => new Promise<Repo>((resolve) => { resolveBind = resolve; }));
+    let rejectUnbind!: (error: Error) => void;
+    vi.mocked(hub.unbindRepo).mockImplementationOnce(() => new Promise<undefined>((_resolve, reject) => { rejectUnbind = reject; }));
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <RepositoriesSettings workspaceId="w1" onRepoBound={vi.fn()} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("/tmp/removed")).toBeTruthy();
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    // Remove the existing repo while the bind is still pending.
+    await userEvent.click(screen.getByRole("button", { name: "Delete /tmp/removed" }));
+    expect(screen.queryByText("/tmp/removed")).toBeNull();
+    // The bind succeeds first, then the unbind fails: the bound repo must stay and the
+    // failed removal must come back, not wipe the list with the old snapshot.
+    await act(async () => { resolveBind(created); });
+    expect(await screen.findByText("/real/app")).toBeTruthy();
+    await act(async () => { rejectUnbind(new Error("unbind boom")); });
+    expect(await screen.findByText("/tmp/removed")).toBeTruthy();
+    expect(screen.getByText("/real/app")).toBeTruthy();
   });
 
   it("asks for another name when the suggested label is taken and ignores a cancelled pick", async () => {

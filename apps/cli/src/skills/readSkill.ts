@@ -1,4 +1,5 @@
 import path from "node:path";
+import { PROGRESS, type CodeParams } from "@nema/shared";
 import { MAX_SKILL_BYTES } from "../extensions/source.js";
 import type { FunctionTool } from "../direct/transport.js";
 import { escapeSkillText, modelInvocable } from "./catalog.js";
@@ -102,7 +103,8 @@ export class SkillReader {
       nemaHome: string;
       snapshot: SkillSnapshot;
       onActivated: (id: string, revision: string) => Promise<void>;
-      onRead: (text: string) => void;
+      /** The tool-call line for a read; `coded` lets the UI localise it. */
+      onRead: (text: string, coded?: { code: string; params?: CodeParams }) => void;
       readRepoFile?: RepoFileReader;
       /** Ids readable besides the catalog's, such as a Skill the user called by hand. */
       extraIds?: string[];
@@ -204,7 +206,8 @@ export class SkillReader {
     }
     if (page.next !== null) parts.push(`（未完：下一页用 offset=${page.next}）`);
 
-    this.o.onRead(`读取 Skill ${skill.id}（${skill.revision}）${rel === null ? "" : read.file.path}`);
+    const file = rel === null ? "" : read.file.path;
+    this.o.onRead(`读取 Skill ${skill.id}（${skill.revision}）${file}`, { code: PROGRESS.skillsRead, params: { id: skill.id, revision: skill.revision, file } });
     if (rel === null && args.offset === 0) trackReport(this.pending, Promise.resolve().then(() => this.o.onActivated(skill.id, skill.revision)));
     return parts.join("\n");
   }

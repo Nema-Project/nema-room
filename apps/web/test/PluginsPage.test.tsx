@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionRecord } from "@nema/shared";
 import { PluginsPage } from "@/components/PluginsPage";
-import { I18nProvider } from "@/lib/i18n";
+import { I18nProvider, useLocale } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
 
 vi.mock("@/lib/hub", () => ({
@@ -494,6 +494,12 @@ function renderPage() {
   );
 }
 
+/** Switches the UI language mid-test, so locale-triggered refetches can be observed. */
+function LocaleSwitcher() {
+  const [, setLocale] = useLocale();
+  return <button onClick={() => setLocale("ja")}>switch locale</button>;
+}
+
 async function previewSource(source = "https://github.com/acme/skills") {
   renderPage();
   const input = await screen.findByLabelText("GitHub repository or skills.sh link");
@@ -592,6 +598,54 @@ describe("installing a skill from the page", () => {
     expect(await screen.findByText("Install finished")).toBeTruthy();
   });
 
+  it("keeps a panel-started install's progress and Cancel after a locale re-read", async () => {
+    vi.mocked(hub.resolveExtensionSource).mockResolvedValue(preview);
+    vi.mocked(hub.installExtension).mockResolvedValue(job("running"));
+    vi.mocked(hub.getExtensionInstall).mockResolvedValue(job("running"));
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <PluginsPage pollMs={1} />
+      </I18nProvider>,
+    );
+    const input = await screen.findByLabelText("GitHub repository or skills.sh link");
+    fireEvent.change(input, { target: { value: "https://github.com/acme/skills" } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Preview" }));
+    });
+    const panel = screen.getByRole("region", { name: "Install a skill" });
+    await act(async () => {
+      fireEvent.click(within(panel).getByRole("button", { name: "Install" }));
+    });
+    expect(within(panel).getByText("Installing 0/3")).toBeTruthy();
+    // The next list read sees the install in flight; a language switch must not move it to the list origin.
+    vi.mocked(hub.listExtensions).mockResolvedValue([
+      ...catalog,
+      row({ id: "pdf", name: "pdf", kind: "skill", provision: "managed", installState: "installing" }),
+    ]);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    });
+    expect(await within(panel).findByText("インストール中 0/3")).toBeTruthy();
+    expect(within(panel).getByRole("button", { name: "インストールを取り消す" })).toBeTruthy();
+  });
+
+  it("clears the list error when a locale retry loads the list", async () => {
+    vi.mocked(hub.listExtensions).mockRejectedValueOnce(new Error("list boom")).mockResolvedValue(catalog);
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <PluginsPage pollMs={1} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("list boom")).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    });
+    expect(await screen.findByRole("heading", { name: "graphify", level: 3 })).toBeTruthy();
+    expect(screen.queryByText("list boom")).toBeNull();
+  });
+
   it("drops a preview as soon as the source is edited, so Install can only use what is shown", async () => {
     vi.mocked(hub.resolveExtensionSource).mockResolvedValue(preview);
     await previewSource();
@@ -625,6 +679,66 @@ describe("installing a skill from the page", () => {
     const block = (await screen.findByRole("heading", { name: "pdf", level: 3 })).closest("section")!;
     expect(await within(block).findByText("Installing 1/3")).toBeTruthy();
     expect(within(block).getByRole("button", { name: "Cancel install" })).toBeTruthy();
+  });
+
+  it("ignores a rediscovered install state that arrives after a cancel", async () => {
+    vi.mocked(hub.listExtensions).mockResolvedValue([...catalog, row({ id: "pdf", name: "pdf", kind: "skill", provision: "managed", installState: "installing" })]);
+    let resolveStale!: (value: ReturnType<typeof job>) => void;
+    vi.mocked(hub.getExtensionInstall)
+      .mockResolvedValueOnce(job("running", 1))
+      .mockReturnValue(new Promise((resolve) => { resolveStale = resolve; }));
+    vi.mocked(hub.cancelExtensionInstall).mockResolvedValue(job("cancelled"));
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <PluginsPage pollMs={1} />
+      </I18nProvider>,
+    );
+    const block = (await screen.findByRole("heading", { name: "pdf", level: 3 })).closest("section")!;
+    expect(await within(block).findByText("Installing 1/3")).toBeTruthy();
+    // A language switch re-reads the list while the install is running; its rediscovery is still pending.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    });
+    expect(await within(block).findByText("インストール中 1/3")).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(within(block).getByRole("button", { name: "インストールを取り消す" }));
+    });
+    expect(hub.cancelExtensionInstall).toHaveBeenCalledWith("pdf");
+    expect(await within(block).findByText("インストールを取り消しました")).toBeTruthy();
+    // The rediscovery read started before the cancel; its stale "running" answer must not revive the job.
+    await act(async () => { resolveStale(job("running", 1)); });
+    expect(within(block).queryByText("インストール中 1/3")).toBeNull();
+    expect(within(block).getByText("インストールを取り消しました")).toBeTruthy();
+  });
+
+  it("ignores a rediscovered install state that arrives after the poll sees it finish", async () => {
+    vi.mocked(hub.listExtensions).mockResolvedValue([...catalog, row({ id: "pdf", name: "pdf", kind: "skill", provision: "managed", installState: "installing" })]);
+    const pending: Array<(value: ReturnType<typeof job>) => void> = [];
+    vi.mocked(hub.getExtensionInstall)
+      .mockResolvedValueOnce(job("running", 1))
+      .mockImplementation(() => new Promise((resolve) => { pending.push(resolve); }));
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <PluginsPage pollMs={1} />
+      </I18nProvider>,
+    );
+    const block = (await screen.findByRole("heading", { name: "pdf", level: 3 })).closest("section")!;
+    expect(await within(block).findByText("Installing 1/3")).toBeTruthy();
+    // Let the poll's first status read start, then switch locale: its rediscovery starts too.
+    await waitFor(() => expect(hub.getExtensionInstall).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    });
+    await waitFor(() => expect(hub.getExtensionInstall).toHaveBeenCalledTimes(3));
+    // The poll sees the install finish first; the rediscovery is still pending.
+    await act(async () => { pending[0]!(job("installed", 3)); });
+    expect(await within(block).findByText("インストール完了")).toBeTruthy();
+    // The rediscovery's stale "running" answer must not revive the job.
+    await act(async () => { pending[1]!(job("running", 1)); });
+    expect(within(block).queryByText("インストール中 1/3")).toBeNull();
+    expect(within(block).getByText("インストール完了")).toBeTruthy();
   });
 
   it("keeps polling after a status request fails once", async () => {

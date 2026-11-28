@@ -109,7 +109,15 @@ describe("component routes", () => {
     };
     const offline = await req(app, "GET", "/api/components");
     expect(offline.status).toBe(503);
-    expect(await offline.json()).toEqual({ error: "daemon 未连接" });
+    // The hub's offline text carries its code (#299 batch 1); the text stays as the fallback.
+    expect(await offline.json()).toEqual({ error: "daemon 未连接", code: "daemon.not-connected" });
+    // A daemon refusal with a code: the code reaches the page next to the text, and the status is unchanged.
+    answer = async () => {
+      throw new DaemonRpcError("镜像地址只允许 http(s) URL，且不能带账号、查询串或片段", undefined, { code: "components.mirror-url-invalid" });
+    };
+    const mirror = await req(app, "PATCH", "/api/components/graphify/settings", { pythonMirror: "ftp://x" });
+    expect(mirror.status).toBe(400);
+    expect(await mirror.json()).toEqual({ error: "镜像地址只允许 http(s) URL，且不能带账号、查询串或片段", code: "components.mirror-url-invalid" });
     expect(componentHttpStatus("镜像地址只允许 http(s) URL，且不能带账号、查询串或片段")).toBe(400);
     expect(componentHttpStatus("component install needs the user's confirmation")).toBe(400);
     expect(componentHttpStatus("something else")).toBe(502);

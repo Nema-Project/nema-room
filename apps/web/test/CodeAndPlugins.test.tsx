@@ -2,9 +2,15 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CodeAndPlugins } from "@/components/CodeAndPlugins";
-import { I18nProvider } from "@/lib/i18n";
+import { I18nProvider, useLocale } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
 import type { PluginCatalogItem, WorkspacePlugin } from "@/lib/types";
+
+/** Switches the UI language mid-test, so locale-triggered refetches can be observed. */
+function LocaleSwitcher() {
+  const [, setLocale] = useLocale();
+  return <button onClick={() => setLocale("ja")}>switch locale</button>;
+}
 
 vi.mock("@/lib/hub", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/hub")>()),
@@ -109,6 +115,23 @@ describe("CodeAndPlugins", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("clears the catalog error when a locale retry succeeds", async () => {
+    vi.mocked(hub.listWorkspacePlugins).mockResolvedValue([codePlugin]);
+    vi.mocked(hub.listPlugins)
+      .mockRejectedValueOnce(new Error("catalog boom"))
+      .mockResolvedValue(catalog);
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <CodeAndPlugins workspaceId="w1" graphOfferSignal={0} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("catalog boom")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    expect(await screen.findByText(/graphify 0\.9\.0/)).toBeTruthy();
+    expect(screen.queryByText("catalog boom")).toBeNull();
   });
 
   it("toggling a function sends PATCH with disabledFunctions", async () => {

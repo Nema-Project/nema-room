@@ -2,7 +2,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, expect, test } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
-import type { TaskAssign } from "@nema/shared";
+import { CodedError, type TaskAssign } from "@nema/shared";
 import { connectDaemon } from "../src/daemon/connection.js";
 import { GraphifyUnavailableError } from "../src/repos/graphify.js";
 import { RpcRouter } from "../src/daemon/rpc.js";
@@ -19,14 +19,37 @@ test("RpcRouter answers a registered method", async () => {
   });
 });
 
-test("unknown method returns 未知方法", async () => {
+test("unknown method returns 未知方法, plus a code the UI can localise", async () => {
   const rpc = new RpcRouter();
   await expect(rpc.handle({ type: "rpc.request", id: "1", method: "nope", params: {} })).resolves.toEqual({
     type: "rpc.response",
     id: "1",
     ok: false,
+    // The text is unchanged: hubs match it to detect an older daemon.
     error: "未知方法 nope",
+    code: "rpc.unknown-method",
+    params: { method: "nope" },
   });
+});
+
+test("a CodedError's code and params travel with its message", async () => {
+  const rpc = new RpcRouter();
+  rpc.register("repo.inspect", async () => {
+    throw new CodedError("repo.not-git-root", "不是 git 仓库的根目录", { path: "/tmp/x" });
+  });
+  await expect(rpc.handle({ type: "rpc.request", id: "3", method: "repo.inspect", params: {} })).resolves.toEqual({
+    type: "rpc.response", id: "3", ok: false,
+    error: "不是 git 仓库的根目录", code: "repo.not-git-root", params: { path: "/tmp/x" },
+  });
+});
+
+test("a Node error's own code (ENOENT) is not sent as a UI code", async () => {
+  const rpc = new RpcRouter();
+  rpc.register("boom", async () => {
+    throw Object.assign(new Error("no such file"), { code: "ENOENT" });
+  });
+  const response = await rpc.handle({ type: "rpc.request", id: "4", method: "boom", params: {} });
+  expect(response).toEqual({ type: "rpc.response", id: "4", ok: false, error: "no such file" });
 });
 
 test("a throwing handler returns ok:false with its message", async () => {

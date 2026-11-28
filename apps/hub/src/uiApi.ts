@@ -9,10 +9,10 @@ import type { Implementation, ReportMessageMeta, WorkPackageMeta } from "@nema/s
 import { entryContentHash, refsHash, relatedSnapshotHash } from "./evidencePayload.js";
 import { insertEvidenceEvent, consumeEvidenceEvent, reconcileUnconsumedEventsLocked, payloadHashFor, type EvidenceEventInput } from "./evidenceEvents.js";
 import type { Entry } from "@nema/shared";
-import { ATTACHMENT_LIMITS, isUnknownRpcMethodError, messageHasBody } from "@nema/shared";
+import { ATTACHMENT_LIMITS, HUB_ERROR, isUnknownRpcMethodError, messageHasBody, type CodeParams } from "@nema/shared";
 import type { CommitMeta } from "@nema/knowledge";
 import type { Db } from "./db/db.js";
-import { DaemonRpcError, type DaemonRpc } from "./daemonRpc.js";
+import { DaemonRpcError, daemonErrorBody, errorBody, type DaemonRpc } from "./daemonRpc.js";
 import type { EventBus, HubEvent } from "./events.js";
 import { indexEntry, timeline, withDiagramStatus } from "./entryIndex.js";
 import { ArchivedWorkspaceError, ARCHIVED_MESSAGE, editUserMessage, getMessage, listMessageVersions, listMessages, MessageOpError, postSystemTask, postUserMessage, searchMessages } from "./messages.js";
@@ -20,7 +20,7 @@ import { vendoredArchify, type Archify } from "./diagrams.js";
 import { posix, win32 } from "node:path";
 import { PluginError, clearMcpSecret, getMcpConfig, mcpHttpStatus, mcpServerStatus, saveMcpConfig, setMcpSecret, startMcp, stopMcp, attachExtension, attachHttpStatus, daemonHttpStatus, discoverExtensions, listExtensions, repairExtension, pluginsForUi, cancelExtensionInstall, extensionInstallStatus, installExtension, removeExtension, resolveExtensionSource, retryExtensionInstall, setExtensionUse, setPluginState, workspacePluginState } from "./plugins.js";
 import { WorkPackageError, approveWorkPackage, confirmWorkPackageTask, dropWorkPackage, regenerateWorkPackage, requestWorkPackage, retryBlockedPackages, userSaveWorkPackageDoc } from "./workpackages.js";
-import { RepoError, bindRepo, getRepo, listIndexing, listRepos, previewRepo, syncBoundRepos, trustedSkillRepos, unbindRepo, updateRepo } from "./repos.js";
+import { RepoError, bindRepo, getRepo, listIndexing, missingRepo, listRepos, previewRepo, syncBoundRepos, trustedSkillRepos, unbindRepo, updateRepo } from "./repos.js";
 import { getRunningTask, listQueuedTasks, resolveUiTask, toUiTask, type Task, type WaitingReason } from "./tasks.js";
 import { revokeActiveShares } from "./shares.js";
 import { createWorkspace, deleteWorkspace, getWorkspace, listWorkspaces, repoPath, updateWorkspace } from "./workspaces.js";
@@ -140,6 +140,8 @@ class HttpError extends Error {
   constructor(
     public status: 400 | 403 | 404 | 409,
     message: string,
+    /** Lets the page show the error in its own language (#299 batch 1); the message stays the fallback. */
+    readonly coded?: { code: string; params?: CodeParams },
   ) {
     super(message);
   }
@@ -183,11 +185,11 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.onError((e, c) => {
     if (e instanceof UpsertRejected || e instanceof RestoreDiagramError) return c.json({ error: e.message }, e.status);
-    if (e instanceof HttpError) return c.json({ error: e.message }, e.status);
+    if (e instanceof HttpError) return c.json(errorBody(e.message, e.coded), e.status);
     if (e instanceof ArchivedWorkspaceError) return c.json({ error: e.message }, 409);
     if (e instanceof WorkPackageError) return c.json({ error: e.message }, e.status);
-    if (e instanceof RepoError) return c.json({ error: e.message }, e.status);
-    if (e instanceof PluginError) return c.json({ error: e.message }, e.status);
+    if (e instanceof RepoError) return c.json(errorBody(e.message, e.coded), e.status);
+    if (e instanceof PluginError) return c.json(errorBody(e.message, e.coded), e.status);
     if (e instanceof ZodError) return c.json({ error: `invalid request: ${zodMessage(e)}` }, 400);
     console.error("ui api error", e);
     return c.json({ error: "internal error" }, 500);
@@ -207,7 +209,7 @@ export function uiRoutes(deps: UiDeps): Hono {
       const result = await deps.daemon.call("dialog.pickDirectory", {}, 10 * 60 * 1000);
       return c.json({ path: directoryChoice(result) });
     } catch (error) {
-      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      if (error instanceof DaemonRpcError) return c.json(daemonErrorBody(error), daemonHttpStatus(error.message));
       throw error;
     }
   });
@@ -216,7 +218,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     try {
       return c.json(pluginsForUi(await deps.daemon.call("plugins.status", {})));
     } catch (error) {
-      if (error instanceof DaemonRpcError) return c.json({ error: error.message, graphifyError: error.graphifyError }, daemonHttpStatus(error.message));
+      if (error instanceof DaemonRpcError) return c.json(daemonErrorBody(error), daemonHttpStatus(error.message));
       throw error;
     }
   });
@@ -225,7 +227,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     try {
       return c.json(await listExtensions(deps.daemon, deps.nemaHome));
     } catch (error) {
-      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      if (error instanceof DaemonRpcError) return c.json(daemonErrorBody(error), daemonHttpStatus(error.message));
       throw error;
     }
   });
@@ -237,7 +239,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     try {
       return c.json(await setExtensionUse(deps.daemon, c.req.param("id"), useState));
     } catch (error) {
-      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      if (error instanceof DaemonRpcError) return c.json(daemonErrorBody(error), daemonHttpStatus(error.message));
       throw error;
     }
   });
@@ -248,7 +250,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     try {
       return c.json(await removeExtension(deps.daemon, c.req.param("id")));
     } catch (error) {
-      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      if (error instanceof DaemonRpcError) return c.json(daemonErrorBody(error), daemonHttpStatus(error.message));
       throw error;
     }
   });
@@ -266,7 +268,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     try {
       return c.json(await resolveExtensionSource(deps.daemon, trimmed));
     } catch (error) {
-      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      if (error instanceof DaemonRpcError) return c.json(daemonErrorBody(error), daemonHttpStatus(error.message));
       throw error;
     }
   });
@@ -284,7 +286,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     try {
       return c.json(await installExtension(deps.daemon, { source: trimmed, commit, path }));
     } catch (error) {
-      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      if (error instanceof DaemonRpcError) return c.json(daemonErrorBody(error), daemonHttpStatus(error.message));
       throw error;
     }
   });
@@ -293,7 +295,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     try {
       return c.json(await call(deps.daemon, c.req.param("id")!));
     } catch (error) {
-      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      if (error instanceof DaemonRpcError) return c.json(daemonErrorBody(error), daemonHttpStatus(error.message));
       throw error;
     }
   };
@@ -305,7 +307,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     try {
       return c.json(await discoverExtensions(deps.daemon));
     } catch (error) {
-      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      if (error instanceof DaemonRpcError) return c.json(daemonErrorBody(error), daemonHttpStatus(error.message));
       throw error;
     }
   });
@@ -316,7 +318,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     try {
       return c.json(await attachExtension(deps.daemon, folder));
     } catch (error) {
-      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, attachHttpStatus(error.message));
+      if (error instanceof DaemonRpcError) return c.json(daemonErrorBody(error), attachHttpStatus(error.message));
       throw error;
     }
   });
@@ -329,7 +331,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     try {
       return c.json(await run(c));
     } catch (error) {
-      if (error instanceof DaemonRpcError) return c.json({ error: error.message }, mcpHttpStatus(error.message));
+      if (error instanceof DaemonRpcError) return c.json(daemonErrorBody(error), mcpHttpStatus(error.message));
       throw error;
     }
   };
@@ -378,7 +380,9 @@ export function uiRoutes(deps: UiDeps): Hono {
     const sub = new URL(c.req.url).pathname.replace(/^\/api\/workspaces\/[^/]+/, "");
     if (sub !== "") {
       const id = c.req.param("id")!;
-      if (!(await getWorkspace(db, id))) throw new HttpError(404, `workspace not found: ${id}`);
+      if (!(await getWorkspace(db, id))) {
+        throw new HttpError(404, `workspace not found: ${id}`, { code: HUB_ERROR.workspaceNotFound, params: { id } });
+      }
     }
     await next();
   });
@@ -440,7 +444,7 @@ export function uiRoutes(deps: UiDeps): Hono {
       if (!(error instanceof DaemonRpcError)) throw error;
       // An older daemon: the menu keeps only the built-in commands.
       if (isUnknownRpcMethodError(error.message)) return c.json({ supported: false, skills: [] });
-      return c.json({ error: error.message }, daemonHttpStatus(error.message));
+      return c.json(daemonErrorBody(error), daemonHttpStatus(error.message));
     }
   });
 
@@ -459,7 +463,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     const id = c.req.param("id")!;
     const repoId = c.req.param("repoId")!;
     const current = await getRepo(db, repoId);
-    if (!current || current.workspaceId !== id) throw new RepoError(404, `找不到仓库：${repoId}`);
+    if (!current || current.workspaceId !== id) throw missingRepo(repoId);
     return c.json(await updateRepo(db, repoId, await body(c, PatchRepoBody), deps.daemon));
   });
 
@@ -474,7 +478,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     const id = c.req.param("id")!;
     const repoId = c.req.param("repoId")!;
     const current = await getRepo(db, repoId);
-    if (!current || current.workspaceId !== id) throw new RepoError(404, `找不到仓库：${repoId}`);
+    if (!current || current.workspaceId !== id) throw missingRepo(repoId);
     await unbindRepo(db, deps.daemon, repoId);
     return c.body(null, 204);
   });
@@ -520,7 +524,7 @@ export function uiRoutes(deps: UiDeps): Hono {
       if (!created.alreadyAnchored) events.emit(workspaceId, { type: "thread.updated", thread: created.thread });
       return c.json({ message: created.message, thread: created.thread, task });
     } catch (e) {
-      if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
+      if (e instanceof MessageOpError) throw new HttpError(e.status, e.message, e.coded);
       if (e instanceof ArchivedWorkspaceError) throw new HttpError(409, e.message);
       throw e;
     }
@@ -542,7 +546,7 @@ export function uiRoutes(deps: UiDeps): Hono {
       }
       return c.json({ message, task });
     } catch (e) {
-      if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
+      if (e instanceof MessageOpError) throw new HttpError(e.status, e.message, e.coded);
       if (e instanceof ArchivedWorkspaceError) throw new HttpError(409, e.message);
       throw e;
     }
@@ -557,7 +561,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     try {
       await markThreadRead(db, threadId, throughSeq);
     } catch (e) {
-      if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
+      if (e instanceof MessageOpError) throw new HttpError(e.status, e.message, e.coded);
       throw e;
     }
     const updated = await getThread(db, threadId);
@@ -593,7 +597,7 @@ export function uiRoutes(deps: UiDeps): Hono {
       events.emit(id, { type: "task.updated", task });
       return c.json({ message, task });
     } catch (e) {
-      if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
+      if (e instanceof MessageOpError) throw new HttpError(e.status, e.message, e.coded);
       if (e instanceof ArchivedWorkspaceError) throw new HttpError(409, e.message);
       throw e;
     }
@@ -613,7 +617,7 @@ export function uiRoutes(deps: UiDeps): Hono {
     try {
       ({ message, task: created, replayed } = await postUserMessage(db, id, content, { authorUserId: c.get("identity").userId, quoteMessageId, threadId, attachmentIds, mentions, accountId, routing }));
     } catch (e) {
-      if (e instanceof MessageOpError) throw new HttpError(e.status, e.message);
+      if (e instanceof MessageOpError) throw new HttpError(e.status, e.message, e.coded);
       throw e;
     }
     const waitingReason = deps.waitingReasonFor ? await deps.waitingReasonFor(created) : undefined;
@@ -650,7 +654,7 @@ export function uiRoutes(deps: UiDeps): Hono {
 
   app.get("/workspaces/:id/workpackages/:wid", async (c) => {
     const wp = await store(c.req.param("id")!).readWorkPackage(c.req.param("wid")!);
-    if (!wp) throw new HttpError(404, `找不到开发包 ${c.req.param("wid")}`);
+    if (!wp) throw new HttpError(404, `找不到开发包 ${c.req.param("wid")}`, { code: HUB_ERROR.workpackageNotFound, params: { id: c.req.param("wid")! } });
     return c.json({ ...wp, entry: (await withReportPass(c.req.param("id")!, [wp.entry]))[0] });
   });
   app.post("/workspaces/:id/workpackages/:wid/approve", async (c) => {
@@ -670,7 +674,7 @@ export function uiRoutes(deps: UiDeps): Hono {
   app.post("/workspaces/:id/workpackages/:wid/tasks/:n/confirm", async (c) => {
     const { id, wid } = await wpWorkspace(c);
     const n = Number(c.req.param("n"));
-    if (!Number.isInteger(n) || n < 1) throw new HttpError(400, "任务编号无效");
+    if (!Number.isInteger(n) || n < 1) throw new HttpError(400, "任务编号无效", { code: HUB_ERROR.workpackageTaskNumberInvalid });
     return c.json(await confirmWorkPackageTask(wpDeps, id, wid, n));
   });
   app.post("/workspaces/:id/workpackages/:wid/drop", async (c) => {
@@ -888,13 +892,13 @@ export function uiRoutes(deps: UiDeps): Hono {
     const eid = c.req.param("eid")!;
     await body(c, z.object({}));
     const current = await requireEntry(ws, eid);
-    if (!current.implementation || !confirmableImplementation(current.implementation)) throw new HttpError(409, IMPLEMENTATION_NOT_CONFIRMABLE);
+    if (!current.implementation || !confirmableImplementation(current.implementation)) throw new HttpError(409, IMPLEMENTATION_NOT_CONFIRMABLE, { code: HUB_ERROR.implementationNotConfirmable });
     let confirmed: Awaited<ReturnType<KnowledgeStore["confirmImplementation"]>>;
     try {
       confirmed = await store(ws).confirmImplementation(eid, { author: "user" });
     } catch (e) {
       // The entry changed between the read above and the store's own check under its lock.
-      if (e instanceof Error && e.message.includes("has no implementation the user can confirm")) throw new HttpError(409, IMPLEMENTATION_NOT_CONFIRMABLE);
+      if (e instanceof Error && e.message.includes("has no implementation the user can confirm")) throw new HttpError(409, IMPLEMENTATION_NOT_CONFIRMABLE, { code: HUB_ERROR.implementationNotConfirmable });
       throw e;
     }
     const { entry, commit } = confirmed;

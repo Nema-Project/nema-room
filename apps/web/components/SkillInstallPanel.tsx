@@ -4,6 +4,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import type { SkillSourcePreview } from "@nema/shared";
 import { resolveExtensionSource } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
+import { hubErrorText } from "@/lib/errorText";
 
 /**
  * Paste a GitHub or skills.sh source, see what it pins to, then pick a skill to install.
@@ -41,7 +42,7 @@ export function SkillInstallPanel({
       .then((result) => setPreview({ source: trimmed, result }))
       .catch((e: unknown) => {
         setPreview(null);
-        setError(e instanceof Error ? e.message : String(e));
+        setError(hubErrorText(e, t));
       })
       .finally(() => setLoading(false));
   };

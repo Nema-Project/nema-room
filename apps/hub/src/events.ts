@@ -1,6 +1,6 @@
 import type { Message } from "./messages.js";
 import type { UiTask } from "./tasks.js";
-import type { Thread } from "@nema/shared";
+import type { CodeParams, CodedText, Thread } from "@nema/shared";
 
 export type HubEvent =
   | { type: "message.created"; message: Message }
@@ -9,7 +9,8 @@ export type HubEvent =
   /** `reasonOnly` marks a republish of the waiting reason only: the dispatch subscriber skips it. */
   | { type: "task.updated"; task: UiTask; reasonOnly?: true }
   | { type: "thread.updated"; thread: Thread }
-  | { type: "task.progress"; taskId: string; threadId: string | null; text: string }
+  /** `text` is the fallback; `code`, `params` and `items` let the page localise it (#299 batch 1). */
+  | { type: "task.progress"; taskId: string; threadId: string | null; text: string; code?: string; params?: CodeParams; items?: CodedText[] }
   | { type: "knowledge.changed"; entryId: string }
   | { type: "daemon.status"; connected: boolean }
   | { type: "workspace.deleted"; workspaceId: string }

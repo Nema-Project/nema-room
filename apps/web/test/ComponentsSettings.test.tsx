@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ComponentsSettings, GraphifyEntry } from "@/components/ComponentsSettings";
 import { DECLINED_KEY, formatMiB, refreshComponents, resetComponentsForTests, saveGraphifySettings, startGraphifyInstall } from "@/lib/components";
-import { I18nProvider } from "@/lib/i18n";
+import { I18nProvider, useLocale } from "@/lib/i18n";
 import * as hub from "@/lib/hub";
 import type { ComponentStatus, ComponentView } from "@/lib/types";
 import en from "../messages/en.json";
@@ -370,6 +370,12 @@ describe("graph entry and first-use offer", () => {
 });
 
 describe("Settings → Components", () => {
+  /** Switches the UI language mid-test, so locale-triggered refetches can be observed. */
+  function LocaleSwitcher() {
+    const [, setLocale] = useLocale();
+    return <button onClick={() => setLocale("ja")}>switch locale</button>;
+  }
+
   function renderSettings() {
     return render(
       <I18nProvider>
@@ -393,6 +399,28 @@ describe("Settings → Components", () => {
     expect(screen.getByRole("link", { name: "official install instructions" }).getAttribute("href")).toBe("https://developers.openai.com/codex/cli");
     expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
     expect(hub.installComponent).not.toHaveBeenCalled();
+  });
+
+  it("clears the agent lookup error when a locale retry succeeds", async () => {
+    answer(view({ state: "installed", version: { graphifyy: "0.9.95", python: "3.14.10" }, path: "/p", launcher: "/p/graphify" }));
+    vi.mocked(hub.getAgentClis)
+      .mockRejectedValueOnce(new Error("agents boom"))
+      .mockResolvedValue({
+        agents: [
+          { id: "codex", command: "codex", installed: false, version: null, installUrl: "https://developers.openai.com/codex/cli" },
+          { id: "claude-code", command: "claude", installed: true, version: "2.1.400 (Claude Code)", installUrl: "https://code.claude.com/docs/en/setup" },
+        ],
+      });
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <ComponentsSettings />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText(/agents boom/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    expect(await screen.findByText(/2\.1\.400 \(Claude Code\)/)).toBeTruthy();
+    expect(screen.queryByText(/agents boom/)).toBeNull();
   });
 
   it("saves the mirror fields to the daemon config and shows an environment variable's value as winning", async () => {

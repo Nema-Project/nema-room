@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AttachmentRefSchema } from "./attachments.js";
 import { RouteDecisionSchema, type RouteDecision } from "./route.js";
+import type { CodeParams, CodedText } from "./errorCode.js";
 
 const DaemonToHubSchema = z.union([
   z.object({
@@ -29,7 +30,18 @@ const DaemonToHubSchema = z.union([
   z.object({
     type: z.literal("task.event"),
     taskId: z.string(),
-    event: z.object({ type: z.enum(["progress", "agent_message", "tool_call"]), text: z.string() }),
+    /**
+     * `text` is the fallback line. `code`, `params` and `items` let the UI show it in the user's language
+     * (#299 batch 1); all optional and unvalidated here, so an older daemon's text-only event and a field this
+     * hub cannot read both cost only the translation, never the event. The hub sanitises them before relaying.
+     */
+    event: z.object({
+      type: z.enum(["progress", "agent_message", "tool_call"]),
+      text: z.string(),
+      code: z.unknown().optional(),
+      params: z.unknown().optional(),
+      items: z.unknown().optional(),
+    }),
   }),
   z.object({
     type: z.literal("task.finished"),
@@ -61,7 +73,15 @@ const DaemonToHubSchema = z.union([
     route: z.unknown().optional(),
   }),
   z.object({ type: z.literal("rpc.response"), id: z.string(), ok: z.literal(true), result: z.unknown() }),
-  z.object({ type: z.literal("rpc.response"), id: z.string(), ok: z.literal(false), error: z.string(), graphifyError: z.unknown().optional() }),
+  /*
+   * `error` is the fallback text. `code` and `params` (#299 batch 1) let the UI localise it; optional, and
+   * unvalidated here for the same reason as `graphifyError`: a field this hub cannot read must cost the
+   * translation, not the error. The hub reads them with `readCoded`.
+   */
+  z.object({
+    type: z.literal("rpc.response"), id: z.string(), ok: z.literal(false), error: z.string(),
+    graphifyError: z.unknown().optional(), code: z.unknown().optional(), params: z.unknown().optional(),
+  }),
   z.object({ type: z.literal("repo.moved"), repoId: z.string(), mainRef: z.string(), from: z.string().nullable(), to: z.string() }),
   z.object({ type: z.literal("repo.fetched"), repoId: z.string(), ok: z.boolean(), error: z.string().optional(), at: z.string() }),
 ]);
@@ -153,7 +173,17 @@ export function parseVersionSkew(message: string): { installVersion: string | nu
 }
 
 export type TaskAssign = Extract<HubToDaemon, { type: "task.assign" }>;
-export type TaskEvent = Extract<DaemonToHub, { type: "task.event" }>["event"];
+/**
+ * What a daemon adapter emits. Stricter than the wire schema, which accepts any `code`/`params`/`items` so an
+ * odd field never drops the line: a producer here must send a code string, flat params and coded items.
+ */
+export type TaskEvent = {
+  type: Extract<DaemonToHub, { type: "task.event" }>["event"]["type"];
+  text: string;
+  code?: string;
+  params?: CodeParams;
+  items?: CodedText[];
+};
 
 export function parseDaemonToHub(raw: unknown): DaemonToHub {
   return DaemonToHubSchema.parse(raw);

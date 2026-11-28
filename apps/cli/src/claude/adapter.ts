@@ -2,7 +2,8 @@ import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { rmSync } from "node:fs";
 import path from "node:path";
 import { commandSpec } from "../platform.js";
-import type { RouteDecision, TaskAssign, TaskEvent } from "@nema/shared";
+import { PROGRESS, SKILL_WARNING, type RouteDecision, type TaskAssign, type TaskEvent } from "@nema/shared";
+import { notLoadedEvent, notPreloadedEvent } from "../skills/direct.js";
 import { attachmentCapabilities, refusal } from "../attachments/capabilities.js";
 import { attachmentLabel, attachmentPreamble, textAttachmentBlock } from "../attachments/blocks.js";
 import { loadTaskAttachments, type LoadedAttachment } from "../attachments/fetch.js";
@@ -195,7 +196,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       if (sections.length > 0) stdin = userMessage(`${task.prompt}\n\n${sections.join("\n\n")}`, loaded.attachments);
     } catch (e) {
       skillRun = null;
-      onEvent({ type: "progress", text: `Skills 准备失败，本任务不使用 Skills：${message(e)}` });
+      onEvent({ type: "progress", text: `Skills 准备失败，本任务不使用 Skills：${message(e)}`, code: PROGRESS.skillsPrepareFailed, params: { error: message(e) } });
     }
 
     try {
@@ -207,8 +208,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       // or stopped task reports what it did load too, and a lost report is a warning, never the outcome.
       if (reports.length > 0) {
         const settled = await settleReports(reports, 5000);
-        if (settled.timedOut) onEvent({ type: "progress", text: "Skill 激活记录未能及时上报" });
-        else if (settled.failed > 0) onEvent({ type: "progress", text: `${settled.failed} 条 Skill 激活记录上报失败` });
+        if (settled.timedOut) onEvent({ type: "progress", text: "Skill 激活记录未能及时上报", code: PROGRESS.skillsActivationTimedOut });
+        else if (settled.failed > 0) onEvent({ type: "progress", text: `${settled.failed} 条 Skill 激活记录上报失败`, code: PROGRESS.skillsActivationFailed, params: { count: settled.failed } });
       }
       rmSync(launch.runDir, { recursive: true, force: true });
     }
@@ -225,7 +226,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
   private async prepareSkills(task: TaskAssign, launch: ClaudeLaunch, onEvent: (e: TaskEvent) => void): Promise<{ run: SkillRun | null; manual: string | null; reports: Promise<unknown>[] }> {
     const snapshot = await takeTaskSnapshot({ nemaHome: this.opts.nemaHome, claudeCodeOk: true, ...(task.projectSkills ? { projectSkills: task.projectSkills } : {}) });
-    if (snapshot.warnings.length > 0) onEvent({ type: "progress", text: `部分 Skill 未载入：${snapshot.warnings.join("；")}` });
+    if (snapshot.warnings.length > 0) onEvent(notLoadedEvent(snapshot.warnings));
     const room = new RoomClient(task.hubUrl, task.runToken);
     const reports: Promise<unknown>[] = [];
     const report = async (id: string, revision: string) => {
@@ -248,13 +249,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     if (snapshot.skills.length === 0) return finish(null);
     const check = this.opts.claudeSkillsOk ?? (() => claudeSkillsSupported(claudeVersionRunner(this.opts.claudeBin ?? "claude")));
     if (!(await check()).ok) {
-      onEvent({ type: "progress", text: TOO_OLD });
+      onEvent({ type: "progress", text: TOO_OLD, code: PROGRESS.skillsClaudeTooOld, params: { min: MIN_CLAUDE_SKILLS_VERSION } });
       return finish(null);
     }
     const prep = await prepareClaudeSkills({ nemaHome: this.opts.nemaHome, runDir: launch.runDir, snapshot, readRepoFile: readRepoSkillFile });
     const reasons = { budget: "超过 50 MiB", changed: "文件已改变", unreadable: "无法读取" } as const;
+    const reasonCodes = { budget: SKILL_WARNING.skippedBudget, changed: SKILL_WARNING.skippedChanged, unreadable: SKILL_WARNING.skippedUnreadable } as const;
     if (prep.skipped.length > 0) {
-      onEvent({ type: "progress", text: `部分 Skill 未载入：${prep.skipped.map((s) => `${s.id}（${reasons[s.reason]}）`).join("；")}` });
+      onEvent(notLoadedEvent(prep.skipped.map((s) => ({ text: `${s.id}（${reasons[s.reason]}）`, code: reasonCodes[s.reason], params: { id: s.id } }))));
     }
     if (prep.copied.length === 0) return finish(null);
     const copied = { skills: snapshot.skills.filter((skill) => prep.copied.includes(skill.id)), warnings: [] };
@@ -263,7 +265,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     if (retained.length > 0) {
       const section = await preloadSection({ snapshot: copied, retained, readBody });
       preload = section.text;
-      if (section.dropped.length > 0) onEvent({ type: "progress", text: `这些 Skill 放不下，没有预载：${section.dropped.join("、")}` });
+      if (section.dropped.length > 0) onEvent(notPreloadedEvent(section.dropped));
     }
     return finish({ prep, skills: new Map(snapshot.skills.map((skill) => [skill.id, skill])), preload, reports, report });
   }
@@ -360,12 +362,16 @@ export class ClaudeCodeAdapter implements AgentAdapter {
           initOk = true;
           if (skillRun) {
             if (ev.version !== null && !versionAtLeast(ev.version)) {
-              onEvent({ type: "progress", text: `Claude Code ${ev.version} 低于 ${MIN_CLAUDE_SKILLS_VERSION}，Skills 可能不按预期工作。` });
+              onEvent({
+                type: "progress", text: `Claude Code ${ev.version} 低于 ${MIN_CLAUDE_SKILLS_VERSION}，Skills 可能不按预期工作。`,
+                code: PROGRESS.skillsClaudeOld, params: { version: ev.version, min: MIN_CLAUDE_SKILLS_VERSION },
+              });
             }
             const listed = new Set(ev.skills ?? []);
             const absent = skillRun.prep.copied.filter((id) => !listed.has(id) && !listed.has(path.basename(path.dirname(skillRun!.prep.skillDirs.get(id)!))));
             if (ev.skills === null || absent.length > 0) {
-              onEvent({ type: "progress", text: `Claude Code 没有列出这些 Skill：${ev.skills === null ? skillRun.prep.copied.join("、") : absent.join("、")}` });
+              const missing = ev.skills === null ? skillRun.prep.copied : absent;
+              onEvent({ type: "progress", text: `Claude Code 没有列出这些 Skill：${missing.join("、")}`, code: PROGRESS.skillsNotListed, items: missing.map((id) => ({ text: id })) });
             }
           }
           return;
@@ -382,7 +388,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
             for (const use of ev.uses) {
               const id = skillActivationFrom(use, skillRun.prep.skillDirs);
               if (id !== null && use.id) pendingSkills.set(use.id, id);
-              else if (use.name === "Skill") onEvent({ type: "progress", text: "认不出这次 Skill 调用的输入，没有记录它读取了哪个 Skill。" });
+              else if (use.name === "Skill") onEvent({ type: "progress", text: "认不出这次 Skill 调用的输入，没有记录它读取了哪个 Skill。", code: PROGRESS.skillsCallUnrecognized });
             }
           }
           return;
@@ -394,7 +400,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
             pendingSkills.delete(r.toolUseId);
             if (r.isError) continue;
             const revision = skillRun!.skills.get(id)!.revision;
-            onEvent({ type: "tool_call", text: `读取 Skill ${id}（${revision}）` });
+            onEvent({ type: "tool_call", text: `读取 Skill ${id}（${revision}）`, code: PROGRESS.skillsRead, params: { id, revision, file: "" } });
             trackReport(skillRun!.reports, skillRun!.report(id, revision));
           }
           return;

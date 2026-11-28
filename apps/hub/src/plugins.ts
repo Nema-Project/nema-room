@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DEFAULT_GRILL_SETTINGS, GraphifyErrorSchema, GRILL_EXTRA_RULES_MAX, PLUGINS, bundledExtensions, isCheckTime, parseMcpConfig, pluginFunction, secretRefs, type ExtensionRecord, type GraphifyError, type McpConfig, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
+import { DEFAULT_GRILL_SETTINGS, GraphifyErrorSchema, GRILL_EXTRA_RULES_MAX, HUB_ERROR, PLUGINS, type CodeParams, bundledExtensions, isCheckTime, parseMcpConfig, pluginFunction, secretRefs, type ExtensionRecord, type GraphifyError, type McpConfig, type GrillSettings, type PluginManifest, type PluginToolSpec } from "@nema/shared";
 import { DaemonRpcError, isDaemonOffline, type DaemonRpc } from "./daemonRpc.js";
 import type { Db } from "./db/db.js";
 import { githubTargets } from "./githubScope.js";
@@ -11,6 +11,8 @@ export class PluginError extends Error {
   constructor(
     public status: 400 | 404,
     message: string,
+    /** Lets the page show the error in its own language (#299 batch 1); the message stays the fallback. */
+    readonly coded?: { code: string; params?: CodeParams },
   ) {
     super(message);
     this.name = "PluginError";
@@ -180,25 +182,27 @@ export async function setPluginState(
   patch: { enabled?: boolean; disabledFunctions?: string[]; settings?: Record<string, unknown> },
 ): Promise<WorkspacePluginState> {
   const ws = await db.query(`select 1 from workspaces where id = $1`, [workspaceId]);
-  if (ws.length === 0) throw new PluginError(404, `找不到 workspace：${workspaceId}`);
+  if (ws.length === 0) throw new PluginError(404, `找不到 workspace：${workspaceId}`, { code: HUB_ERROR.workspaceNotFound, params: { id: workspaceId } });
   const plugin = PLUGINS.find((item) => item.id === pluginId);
-  if (!plugin) throw new PluginError(404, `找不到插件：${pluginId}`);
+  if (!plugin) throw new PluginError(404, `找不到插件：${pluginId}`, { code: HUB_ERROR.pluginNotFound, params: { id: pluginId } });
   const known = new Set(plugin.functions.map((fn) => fn.name));
   for (const name of patch.disabledFunctions ?? []) {
-    if (!known.has(name)) throw new PluginError(400, `未知函数 ${name}`);
+    if (!known.has(name)) throw new PluginError(400, `未知函数 ${name}`, { code: HUB_ERROR.pluginUnknownFunction, params: { name } });
   }
   let settings: Record<string, unknown> | undefined;
   if (patch.settings !== undefined) {
     if (plugin.id === "github") {
       const parsedGithub = GithubSettingsSchema.safeParse(patch.settings);
-      if (!parsedGithub.success) throw new PluginError(400, "无效的 GitHub 设置");
+      if (!parsedGithub.success) throw new PluginError(400, "无效的 GitHub 设置", { code: HUB_ERROR.pluginGithubSettingsInvalid });
       settings = parsedGithub.data;
     } else {
-      if (plugin.id !== "grill") throw new PluginError(400, `插件 ${pluginId} 没有设置项`);
+      if (plugin.id !== "grill") throw new PluginError(400, `插件 ${pluginId} 没有设置项`, { code: HUB_ERROR.pluginNoSettings, params: { id: pluginId } });
       const extra = patch.settings.extraRules;
-      if (typeof extra === "string" && extra.length > GRILL_EXTRA_RULES_MAX) throw new PluginError(400, "补充追问规则最多 2000 字");
+      if (typeof extra === "string" && extra.length > GRILL_EXTRA_RULES_MAX) {
+        throw new PluginError(400, "补充追问规则最多 2000 字", { code: HUB_ERROR.pluginGrillRulesTooLong, params: { max: GRILL_EXTRA_RULES_MAX } });
+      }
       const parsed = GrillSettingsSchema.safeParse(patch.settings);
-      if (!parsed.success) throw new PluginError(400, "无效的追问设置");
+      if (!parsed.success) throw new PluginError(400, "无效的追问设置", { code: HUB_ERROR.pluginGrillSettingsInvalid });
       settings = parsed.data;
     }
   }

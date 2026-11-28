@@ -1,7 +1,7 @@
 import { existsSync, lstatSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
-import { isReservedSlashName, type ExtensionRecord, type SkillUsage } from "@nema/shared";
+import { isReservedSlashName, type CodedText, type ExtensionRecord, type SkillUsage } from "@nema/shared";
 import { MAX_SKILL_BYTES } from "../extensions/source.js";
 import { openExtensionStore, ownedDirectory } from "../extensions/store.js";
 import { parseSkillFile, type SkillMeta } from "./frontmatter.js";
@@ -27,7 +27,8 @@ export type SnapshotSkill = {
   usage: SkillUsage;
 };
 
-export type SkillSnapshot = { skills: SnapshotSkill[]; warnings: string[] };
+/** `warnings` are progress-line items: each keeps its fallback text, and most carry a code the UI can localise. */
+export type SkillSnapshot = { skills: SnapshotSkill[]; warnings: CodedText[] };
 
 /** Bytes of one file in a repository Skill at its pinned commit; supplied by the repository batch. */
 export type RepoFileReader = (skill: SnapshotSkill, rel: string, maxBytes: number) => Promise<Buffer>;
@@ -104,11 +105,12 @@ async function inspectRow(nemaHome: string, row: ExtensionRecord, claudeCodeOk: 
 export async function takeSnapshot(o: { nemaHome: string; claudeCodeOk: boolean; repoSkills?: SnapshotSkill[] }): Promise<SkillSnapshot> {
   const rows = openExtensionStore(extensionsRoot(o.nemaHome)).list().filter(usable);
   const skills: SnapshotSkill[] = [];
-  const warnings: string[] = [];
+  const warnings: CodedText[] = [];
   for (const row of rows) {
     // One unreadable folder costs only its own Skill.
     const inspected = await inspectRow(o.nemaHome, row, o.claudeCodeOk).catch((error: unknown) => `${row.id}: ${error instanceof Error ? error.message : String(error)}`);
-    if (typeof inspected === "string") warnings.push(inspected);
+    // Uncoded: the text is the folder's own read error, shown as it is.
+    if (typeof inspected === "string") warnings.push({ text: inspected });
     else skills.push(inspected);
   }
   skills.push(...(o.repoSkills ?? []));

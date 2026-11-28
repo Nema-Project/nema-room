@@ -1,4 +1,4 @@
-import { ARCHITECTURE_DIAGRAM_MARKER, isBranchName, type GraphifyError } from "@nema/shared";
+import { ARCHITECTURE_DIAGRAM_MARKER, HUB_ERROR, isBranchName, type CodeParams, type GraphifyError } from "@nema/shared";
 import { nanoid } from "nanoid";
 import type { Db } from "./db/db.js";
 import { DaemonRpcError, INDEX_RPC_TIMEOUT_MS, isDaemonOffline, type DaemonRpc } from "./daemonRpc.js";
@@ -11,6 +11,8 @@ export class RepoError extends Error {
   constructor(
     public status: 400 | 404 | 409 | 503,
     message: string,
+    /** Lets the page show the error in its own language (#299 batch 1); the message stays the fallback. */
+    readonly coded?: { code?: string; params?: CodeParams },
   ) {
     super(message);
     this.name = "RepoError";
@@ -140,17 +142,33 @@ function uniqueViolation(error: unknown): "label" | "repo" | null {
 }
 
 function duplicateLabel(label: string): RepoError {
-  return new RepoError(409, `本 workspace 已有用途为 ${label} 的仓库`);
+  return new RepoError(409, `本 workspace 已有用途为 ${label} 的仓库`, { code: HUB_ERROR.repoLabelTaken, params: { label } });
 }
 
 /** 1–40 characters (code points), no control characters. */
 function checkLabel(label: string): void {
   const length = [...label].length;
-  if (length < 1 || length > 40 || /\p{Cc}/u.test(label)) throw new RepoError(400, "用途说明需为 1–40 个字符");
+  if (length < 1 || length > 40 || /\p{Cc}/u.test(label)) throw new RepoError(400, "用途说明需为 1–40 个字符", { code: HUB_ERROR.repoLabelInvalid });
 }
 
-function missingRepo(repoId: string): RepoError {
-  return new RepoError(404, `找不到仓库：${repoId}`);
+export function missingRepo(repoId: string): RepoError {
+  return new RepoError(404, `找不到仓库：${repoId}`, { code: HUB_ERROR.repoNotFound, params: { id: repoId } });
+}
+
+function missingWorkspace(workspaceId: string): RepoError {
+  return new RepoError(404, `找不到 workspace：${workspaceId}`, { code: HUB_ERROR.workspaceNotFound, params: { id: workspaceId } });
+}
+
+function archivedWorkspace(): RepoError {
+  return new RepoError(409, "workspace 已归档，取消归档后才能绑定仓库", { code: HUB_ERROR.workspaceArchivedRepoBind });
+}
+
+/**
+ * A failed `repo.inspect`: 503 when no daemon answered, else 400 (the daemon refused the path). The daemon's
+ * code, when it sent one, travels with the text so the page can show it in its own language.
+ */
+function inspectFailure(error: DaemonRpcError): RepoError {
+  return new RepoError(isDaemonOffline(error.message) ? 503 : 400, error.message, error);
 }
 
 function rpcRepo(repo: Repo): { workspaceId: string; repoId: string; path: string; mainBranch: string } {
@@ -206,6 +224,7 @@ export async function applyRepoFetched(
 }
 
 const INVALID_BRANCH = "主分支名称无效";
+const invalidBranch = () => new RepoError(400, INVALID_BRANCH, { code: HUB_ERROR.repoBranchInvalid });
 
 export type RepoPreview = {
   root: string;
@@ -225,16 +244,13 @@ function suggestedLabel(root: string): string {
 
 export async function previewRepo(db: Db, daemon: DaemonRpc, workspaceId: string, path: string): Promise<RepoPreview> {
   const ws = await db.query<{ archived_at: Date | string | null }>(`select archived_at from workspaces where id = $1`, [workspaceId]);
-  if (!ws[0]) throw new RepoError(404, `找不到 workspace：${workspaceId}`);
-  if (ws[0].archived_at) throw new RepoError(409, "workspace 已归档，取消归档后才能绑定仓库");
+  if (!ws[0]) throw missingWorkspace(workspaceId);
+  if (ws[0].archived_at) throw archivedWorkspace();
   let inspected: Inspected;
   try {
     inspected = asInspected(await daemon.call("repo.inspect", { path }, undefined, { workspaceId }));
   } catch (error) {
-    if (error instanceof DaemonRpcError) {
-      if (isDaemonOffline(error.message)) throw new RepoError(503, error.message);
-      throw new RepoError(400, error.message);
-    }
+    if (error instanceof DaemonRpcError) throw inspectFailure(error);
     throw error;
   }
   const label = suggestedLabel(inspected.root);
@@ -310,18 +326,15 @@ export async function bindRepo(
   events?: EventBus,
 ): Promise<Repo> {
   checkLabel(input.label);
-  if (input.mainBranch !== undefined && !isBranchName(input.mainBranch)) throw new RepoError(400, INVALID_BRANCH);
+  if (input.mainBranch !== undefined && !isBranchName(input.mainBranch)) throw invalidBranch();
   const ws = await db.query<{ archived_at: Date | string | null }>(`select archived_at from workspaces where id = $1`, [workspaceId]);
-  if (!ws[0]) throw new RepoError(404, `找不到 workspace：${workspaceId}`);
-  if (ws[0].archived_at) throw new RepoError(409, "workspace 已归档，取消归档后才能绑定仓库");
+  if (!ws[0]) throw missingWorkspace(workspaceId);
+  if (ws[0].archived_at) throw archivedWorkspace();
   let inspected: Inspected;
   try {
     inspected = asInspected(await daemon.call("repo.inspect", { path: input.path }, undefined, { workspaceId }));
   } catch (error) {
-    if (error instanceof DaemonRpcError) {
-      if (isDaemonOffline(error.message)) throw new RepoError(503, error.message);
-      throw new RepoError(400, error.message);
-    }
+    if (error instanceof DaemonRpcError) throw inspectFailure(error);
     throw error;
   }
   const id = `repo_${nanoid(12)}`;
@@ -344,7 +357,8 @@ export async function bindRepo(
       `select w.name as name from workspace_repos r join workspaces w on w.id = r.workspace_id where r.git_common_dir = $1`,
       [inspected.gitCommonDir],
     );
-    throw new RepoError(409, `该仓库已绑定到 workspace ${existing[0]?.name ?? ""}`);
+    const workspace = existing[0]?.name ?? "";
+    throw new RepoError(409, `该仓库已绑定到 workspace ${workspace}`, { code: HUB_ERROR.repoBoundElsewhere, params: { workspace } });
   }
   noteIndex(events, repo, "running");
   void daemon
@@ -401,7 +415,7 @@ export async function updateRepo(db: Db, repoId: string, patch: { label?: string
     sets.push(`label = $${params.length}`);
   }
   if (patch.mainBranch !== undefined) {
-    if (!isBranchName(patch.mainBranch)) throw new RepoError(400, INVALID_BRANCH);
+    if (!isBranchName(patch.mainBranch)) throw invalidBranch();
     params.push(patch.mainBranch);
     sets.push(`main_branch = $${params.length}`);
   }

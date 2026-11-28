@@ -1,12 +1,5 @@
 import { nanoid } from "nanoid";
-import { GraphifyErrorSchema, type DaemonToHub, type GraphifyError } from "@nema/shared";
-
-export class DaemonRpcError extends Error {
-  constructor(message: string, readonly graphifyError?: GraphifyError) {
-    super(message);
-    this.name = "DaemonRpcError";
-  }
-}
+import { GraphifyErrorSchema, HUB_ERROR, readCoded, type CodeParams, type DaemonToHub, type ErrorBody, type GraphifyError } from "@nema/shared";
 
 /*
  * The hub's own errors for "no daemon answered" (#299 batch 0). Status codes, repo binding and the extension
@@ -16,7 +9,44 @@ export class DaemonRpcError extends Error {
 export const DAEMON_NOT_CONNECTED = "daemon 未连接";
 export const DAEMON_DISCONNECTED = "daemon 已断开";
 export const DAEMON_TIMED_OUT = "daemon 响应超时";
-const DAEMON_OFFLINE: ReadonlySet<string> = new Set([DAEMON_NOT_CONNECTED, DAEMON_DISCONNECTED, DAEMON_TIMED_OUT]);
+/** The UI code of each offline text (#299 batch 1); `DaemonRpcError` attaches it, so no producer has to. */
+const DAEMON_OFFLINE_CODES: ReadonlyMap<string, string> = new Map([
+  [DAEMON_NOT_CONNECTED, HUB_ERROR.daemonNotConnected],
+  [DAEMON_DISCONNECTED, HUB_ERROR.daemonDisconnected],
+  [DAEMON_TIMED_OUT, HUB_ERROR.daemonTimedOut],
+]);
+const DAEMON_OFFLINE: ReadonlySet<string> = new Set(DAEMON_OFFLINE_CODES.keys());
+
+/**
+ * A daemon call that failed. `message` is the fallback text; `code` and `params` (#299 batch 1) come from a
+ * daemon that sends them, or from the hub's own offline texts, and are absent for an older daemon.
+ */
+export class DaemonRpcError extends Error {
+  readonly code?: string;
+  readonly params?: CodeParams;
+
+  constructor(message: string, readonly graphifyError?: GraphifyError, coded?: { code?: string; params?: CodeParams }) {
+    super(message);
+    this.name = "DaemonRpcError";
+    const code = coded?.code ?? DAEMON_OFFLINE_CODES.get(message);
+    if (code !== undefined) this.code = code;
+    if (coded?.code !== undefined && coded.params !== undefined) this.params = coded.params;
+  }
+}
+
+/** `{ error, code?, params? }` for an error response; the fallback text is always there. */
+export function errorBody(message: string, coded?: { code?: string; params?: CodeParams }): ErrorBody {
+  return {
+    error: message,
+    ...(coded?.code !== undefined ? { code: coded.code } : {}),
+    ...(coded?.code !== undefined && coded.params !== undefined ? { params: coded.params } : {}),
+  };
+}
+
+/** The body a route answers a failed daemon call with: text, code and params, and Graphify's facts when it has them. */
+export function daemonErrorBody(error: DaemonRpcError): ErrorBody & { graphifyError?: GraphifyError } {
+  return { ...errorBody(error.message, error), ...(error.graphifyError ? { graphifyError: error.graphifyError } : {}) };
+}
 
 /** Whether an error message says no daemon answered (not connected, disconnected, or timed out). */
 export function isDaemonOffline(message: string): boolean {
@@ -98,7 +128,7 @@ export function createConnectionRpc(send: (id: string, method: string, params: u
       pending.delete(message.id);
       clearTimeout(waiter.timer);
       if (message.ok) waiter.resolve(message.result);
-      else waiter.reject(new DaemonRpcError(message.error, GraphifyErrorSchema.safeParse(message.graphifyError).data));
+      else waiter.reject(new DaemonRpcError(message.error, GraphifyErrorSchema.safeParse(message.graphifyError).data, readCoded(message.code, message.params)));
     },
     failAll(message) {
       for (const waiter of pending.values()) {

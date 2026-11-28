@@ -1,3 +1,4 @@
+import { CodedError, DAEMON_ERROR } from "@nema/shared";
 import { execFile } from "node:child_process";
 import path from "node:path";
 
@@ -128,7 +129,7 @@ export function pickDirectory(platform = process.platform, run: CommandRunner = 
       return normalizePickedPath(stdout, platform);
     } catch (error) {
       if (isCancel(error)) return null;
-      throw new Error("无法打开文件夹选择器");
+      throw new CodedError(DAEMON_ERROR.pickerUnavailable, "无法打开文件夹选择器");
     }
   })();
   if (run !== defaultRun) return work;

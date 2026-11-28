@@ -18,6 +18,7 @@ import { repairFailureText, statusText } from "@/lib/graphifyText";
 import { getAgentClis } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
 import type { AgentCliStatus, ComponentFailureReason, ComponentStatus, ComponentView } from "@/lib/types";
+import { hubErrorText } from "@/lib/errorText";
 
 /** A next step per cause, so network, proxy and checksum failures read differently. */
 const HINT_KEY: Partial<Record<ComponentFailureReason, string>> = {
@@ -125,7 +126,7 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
       setCancelOutcome(null);
       setStep("follow");
     } catch (err) {
-      setRequestError(err instanceof Error ? err.message : String(err));
+      setRequestError(hubErrorText(err, t));
     } finally {
       setBusy(false);
     }
@@ -159,7 +160,7 @@ export function GraphifyInstallDialog({ onClose, force = false }: { onClose: () 
       const view = await cancelGraphifyInstall();
       setCancelOutcome(view.cancelled === true ? "cancelled" : view.cancelled === false ? "completed" : "unknown");
     } catch (err) {
-      setRequestError(err instanceof Error ? err.message : String(err));
+      setRequestError(hubErrorText(err, t));
     } finally {
       setBusy(false);
     }
@@ -382,7 +383,7 @@ function MirrorSettings({ view }: { view: ComponentView }) {
       await saveGraphifySettings({ pythonMirror: python.trim() === "" ? null : python.trim(), pypiBase: pypi.trim() === "" ? null : pypi.trim() });
       setState("saved");
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : String(err));
+      setSaveError(hubErrorText(err, t));
       setState("error");
     }
   }
@@ -392,7 +393,7 @@ function MirrorSettings({ view }: { view: ComponentView }) {
     try {
       await saveGraphifySettings({ offline });
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : String(err));
+      setSaveError(hubErrorText(err, t));
     }
   }
 
@@ -439,15 +440,17 @@ function AgentClis() {
     let live = true;
     getAgentClis()
       .then((body) => {
-        if (live) setAgents(body.agents);
+        if (!live) return;
+        setAgents(body.agents);
+        setError(null);
       })
       .catch((err: unknown) => {
-        if (live) setError(err instanceof Error ? err.message : String(err));
+        if (live) setError(hubErrorText(err, t));
       });
     return () => {
       live = false;
     };
-  }, []);
+  }, [t]);
 
   return (
     <div className="agent-clis">

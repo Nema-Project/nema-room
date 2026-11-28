@@ -1,4 +1,4 @@
-import { AttachmentCapabilitiesSchema, GraphifyErrorSchema, type GraphifyError, type AttachmentCapabilities, type AttachmentView, type ExtensionRecord, type MessageMention, type SkillDiscovery, type SkillInstallJob, type SkillSourcePreview, type SkillUsage } from "@nema/shared";
+import { AttachmentCapabilitiesSchema, GraphifyErrorSchema, readCoded, type CodeParams, type GraphifyError, type AttachmentCapabilities, type AttachmentView, type ExtensionRecord, type MessageMention, type SkillDiscovery, type SkillInstallJob, type SkillSourcePreview, type SkillUsage } from "@nema/shared";
 import type { McpConfig, McpConnection } from "@nema/shared";
 import type {
   AgentCliStatus,
@@ -47,12 +47,19 @@ function base(): string {
 }
 
 export class HubError extends Error {
+  /** The error's code (#299 batch 1), when the hub sent one; render with `hubErrorText`. Absent from older hubs. */
+  readonly code?: string;
+  readonly params?: CodeParams;
+
   constructor(
     public status: number,
     message: string,
     readonly graphifyError?: GraphifyError,
+    coded?: { code?: string; params?: CodeParams },
   ) {
     super(message);
+    if (coded?.code !== undefined) this.code = coded.code;
+    if (coded?.code !== undefined && coded.params !== undefined) this.params = coded.params;
   }
 }
 
@@ -83,14 +90,16 @@ async function request<T>(path: string, init?: { method?: string; body?: unknown
     if (init?.loginRedirect !== false) redirectOnSessionLoss(res.status);
     let message = `hub request failed (${res.status})`;
     let graphifyError: GraphifyError | undefined;
+    let coded: { code?: string; params?: CodeParams } = {};
     try {
-      const j = (await res.json()) as { error?: string; graphifyError?: unknown };
+      const j = (await res.json()) as { error?: string; graphifyError?: unknown; code?: unknown; params?: unknown };
       if (j.error) message = j.error;
       graphifyError = GraphifyErrorSchema.safeParse(j.graphifyError).data;
+      coded = readCoded(j.code, j.params);
     } catch {
       /* non-JSON error body */
     }
-    throw new HubError(res.status, message, graphifyError);
+    throw new HubError(res.status, message, graphifyError, coded);
   }
   return (await res.json()) as T;
 }
@@ -268,13 +277,15 @@ function messageBody(content: string, quoteMessageId?: string, attachmentIds?: s
 async function hubFailure(res: Response): Promise<HubError> {
   redirectOnSessionLoss(res.status);
   let message = `hub request failed (${res.status})`;
+  let coded: { code?: string; params?: CodeParams } = {};
   try {
-    const j = (await res.json()) as { error?: string };
+    const j = (await res.json()) as { error?: string; code?: unknown; params?: unknown };
     if (j.error) message = j.error;
+    coded = readCoded(j.code, j.params);
   } catch {
     /* non-JSON error body */
   }
-  return new HubError(res.status, message);
+  return new HubError(res.status, message, undefined, coded);
 }
 
 const att = (id: string, aid: string) => `${w(id)}/attachments/${encodeURIComponent(aid)}`;

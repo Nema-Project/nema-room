@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EntryDetail } from "@/components/EntryDetail";
 import { formatDay, formatTime } from "@/lib/format";
 import * as hub from "@/lib/hub";
-import { I18nProvider } from "@/lib/i18n";
+import { I18nProvider, useLocale } from "@/lib/i18n";
 import type { Entry } from "@/lib/types";
 
 vi.mock("@/lib/hub", () => ({
@@ -23,6 +23,7 @@ const hist = [
 ];
 
 beforeEach(() => {
+  localStorage.clear();
   vi.mocked(hub.getEntry).mockResolvedValue(entry);
   vi.mocked(hub.getHistory).mockResolvedValue(hist);
   vi.mocked(hub.getWhy).mockResolvedValue([]);
@@ -48,6 +49,12 @@ const mount = async (props: { onClose?: () => void; onJumpToMessage?: (id: strin
   );
   await act(async () => {});
 };
+
+/** Switches the UI language mid-test, so locale-triggered refetches can be observed. */
+function LocaleSwitcher() {
+  const [, setLocale] = useLocale();
+  return <button onClick={() => setLocale("ja")}>switch locale</button>;
+}
 
 describe("EntryDetail", () => {
   it("lists two sources and jumps to the clicked message", async () => {
@@ -169,6 +176,24 @@ describe("EntryDetail", () => {
     await userEvent.click(screen.getByRole("button", { name: "Reload latest" }));
     expect((screen.getByRole("textbox", { name: "Title" }) as HTMLInputElement).value).toBe("Someone else");
     expect(screen.queryByText(/Saving will overwrite/)).toBeNull();
+  });
+  it("does not flag stale when only the language changes during editing", async () => {
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <EntryDetail workspaceId="w1" entryId="R-1" onClose={vi.fn()} onJumpToMessage={vi.fn()} />
+      </I18nProvider>,
+    );
+    await act(async () => {});
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const title = screen.getByRole("textbox", { name: "Title" }) as HTMLInputElement;
+    await userEvent.clear(title);
+    await userEvent.type(title, "My edit");
+    await userEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    await act(async () => {});
+    expect(screen.getByDisplayValue("My edit")).toBeTruthy();
+    expect(screen.queryByText("この項目は更新されました。保存すると最新の内容を上書きします。")).toBeNull();
+    expect(screen.queryByRole("button", { name: "最新を読み込む" })).toBeNull();
   });
   it("shows basis, times and quotes, and confirm calls the confirm route then shows the updated basis", async () => {
     const ingestedAt = "2026-10-21T05:00:00.000Z";

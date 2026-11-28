@@ -1,13 +1,16 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { progressText } from "./errorText";
 import { getActiveTask } from "./hub";
+import { useT } from "./i18n";
 import type { HubEvent, Task } from "./types";
 
 type Progress = Extract<HubEvent, { type: "task.progress" }>;
 type Activity = { task: Task | null; progress: Progress | null };
 
 export function useTaskActivity(workspaceId: string, threadId: string | null) {
+  const t = useT();
   const [activity, setActivity] = useState<Activity>({ task: null, progress: null });
   const pendingSnapshot = useRef<Set<string> | null>(null);
 
@@ -65,8 +68,9 @@ export function useTaskActivity(workspaceId: string, threadId: string | null) {
   }, [workspaceId, threadId, setTask]);
 
   const runningTask = activity.task?.workspaceId === workspaceId && activity.task.threadId === threadId ? activity.task : null;
+  // Rendered here so a locale switch re-renders the line; a line without a known code shows the daemon's text.
   const progress = runningTask && activity.progress?.taskId === runningTask.id && activity.progress.threadId === threadId
-    ? activity.progress.text
+    ? progressText(activity.progress, t)
     : "";
   return { runningTask, progress, loadActive, handleTaskEvent };
 }

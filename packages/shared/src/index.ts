@@ -7,6 +7,7 @@ export * from "./mcpConfig.js";
 export * from "./protocol.js";
 export * from "./remoteUrl.js";
 export * from "./graphifyError.js";
+export * from "./errorCode.js";
 export * from "./route.js";
 export * from "./roomApi.js";
 export * from "./report.js";

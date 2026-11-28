@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { AttachProblem, DiscoveredSkill, ExtensionRecord, SkillDiscovery } from "@nema/shared";
 import { attachExtension, discoverExtensions, pickDirectory } from "@/lib/hub";
 import { useT } from "@/lib/i18n";
+import { hubErrorText } from "@/lib/errorText";
 
 const PROBLEMS: ReadonlySet<string> = new Set<AttachProblem>([
   "missing-frontmatter",
@@ -78,9 +79,9 @@ export function ExternalSkillsPanel({
       })
       .catch((e: unknown) => {
         if (reads.current !== mine) return;
-        setLoadError(e instanceof Error ? e.message : String(e));
+        setLoadError(hubErrorText(e, t));
       });
-  }, [key]);
+  }, [key, t]);
 
   useEffect(() => () => {
     // A read that answers after the page closed must not set state.
@@ -111,7 +112,7 @@ export function ExternalSkillsPanel({
         if (target === folder) setFolder("");
         onAttached(record);
       })
-      .catch((e: unknown) => setError(describe(e instanceof Error ? e.message : String(e))))
+      .catch((e: unknown) => setError(describe(hubErrorText(e, t))))
       .finally(() => setPending(null));
   };
 
@@ -127,7 +128,7 @@ export function ExternalSkillsPanel({
       .then((chosen) => {
         if (chosen.path) setFolder(chosen.path);
       })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+      .catch((e: unknown) => setError(hubErrorText(e, t)));
   };
 
   return (

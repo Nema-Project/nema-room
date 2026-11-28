@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { PluginToolSpec } from "@nema/shared";
+import { PROGRESS, type CodeParams, type PluginToolSpec } from "@nema/shared";
 import type { RoomClient } from "../room/client.js";
 import { dispatchTool, type RoomApi } from "./tools.js";
 import { READ_SKILL, type SkillReader } from "../skills/readSkill.js";
@@ -27,8 +27,8 @@ export type ToolLoopOptions = {
   pluginTools?: PluginToolSpec[];
   /** Reads Skills for `read_skill`; only set when the task has Skills. */
   skills?: SkillReader;
-  /** Short progress notes (e.g. which Room function is being called). */
-  onProgress: (text: string) => void;
+  /** Short progress notes (e.g. which Room function is being called); `coded` lets the UI localise the text. */
+  onProgress: (text: string, coded?: { code: string; params?: CodeParams }) => void;
   /**
    * A tool call changed the Room (a successful upsert, thread open, install offer, or plugin call).
    * Read-only calls and refused writes do not fire it.
@@ -89,8 +89,8 @@ export async function runToolLoop(opts: ToolLoopOptions): Promise<{ reply: strin
   // Assistant text since the last round of function calls: the reply, possibly split over continuations.
   let answer = "";
   const signal = opts.signal;
-  const progress = (text: string) => {
-    if (!signal?.aborted) opts.onProgress(text);
+  const progress = (text: string, coded?: { code: string; params?: CodeParams }) => {
+    if (!signal?.aborted) opts.onProgress(text, coded);
   };
 
   for (;;) {
@@ -146,7 +146,7 @@ export async function runToolLoop(opts: ToolLoopOptions): Promise<{ reply: strin
           if (unknownTools > limits.maxUnknownTools) throw new Error("Agent 多次请求未提供的工具，已中止");
         } else {
           // A Skill read reports itself, with the Skill and its version.
-          if (!(opts.skills && c.name === READ_SKILL)) progress(`调用 ${c.name}`);
+          if (!(opts.skills && c.name === READ_SKILL)) progress(`调用 ${c.name}`, { code: PROGRESS.toolCall, params: { name: c.name } });
         }
         history.push({ type: "function_call_output", call_id: c.call_id, output: r.output });
       }

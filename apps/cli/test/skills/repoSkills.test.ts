@@ -66,7 +66,7 @@ test("the same name in both roots: .agents/skills wins, with a warning", async (
   const dir = repo("a", { ".agents/skills/tdd/SKILL.md": skillText("tdd", "agents"), ".claude/skills/tdd/SKILL.md": skillText("tdd", "claude") });
   const out = await scan(bound(dir));
   expect(out.skills.map((s) => s.meta.description)).toEqual(["agents"]);
-  expect(out.warnings.join("\n")).toContain(".claude/skills/tdd 被同仓库的同名 Skill 覆盖");
+  expect(out.warnings.map((w) => w.text).join("\n")).toContain(".claude/skills/tdd 被同仓库的同名 Skill 覆盖");
 });
 
 test("links, submodules and more than 500 files are refused", async () => {
@@ -81,10 +81,16 @@ test("links, submodules and more than 500 files are refused", async () => {
   git(dir, "commit", "-q", "-m", "submodule");
   const out = await scan(bound(dir));
   expect(out.skills.map((s) => s.id)).toEqual(["ok"]);
-  const warnings = out.warnings.join("\n");
+  const warnings = out.warnings.map((w) => w.text).join("\n");
   expect(warnings).toContain("linky pw 是符号链接");
   expect(warnings).toContain("超过 500 个文件");
   expect(warnings).toContain("vendor 是子模块");
+  // Each refusal carries its own code and the facts the UI needs to say it in another language.
+  expect(out.warnings).toEqual(expect.arrayContaining([
+    expect.objectContaining({ code: "skill.refused-symlink", params: { repo: "web", dir: ".agents/skills/linky", path: "pw" } }),
+    expect.objectContaining({ code: "skill.refused-too-many-files", params: { repo: "web", dir: ".agents/skills/many", max: 500 } }),
+    expect.objectContaining({ code: "skill.refused-submodule", params: { repo: "web", dir: ".agents/skills/subby", path: "vendor" } }),
+  ]));
 });
 
 test("binary and 2 MiB files come back byte for byte; over 5 MiB is refused", async () => {
@@ -99,7 +105,7 @@ test("binary and 2 MiB files come back byte for byte; over 5 MiB is refused", as
   expect((await readRepoSkillFile(art, "big.bin", 3 * 1024 * 1024)).equals(big)).toBe(true);
   await expect(readRepoSkillFile(art, "big.bin", 1024 * 1024)).rejects.toThrow();
   expect(out.skills.map((s) => s.id)).not.toContain("huge");
-  expect(out.warnings.join("\n")).toContain("超过 5 MiB");
+  expect(out.warnings.map((w) => w.text).join("\n")).toContain("超过 5 MiB");
 });
 
 test("slugs: label form, reserved names renamed, clashes get the repo id", () => {
@@ -137,13 +143,14 @@ test("origin's new commit is fetched; not again within 5 minutes; a failed fetch
   rmSync(origin, { recursive: true, force: true });
   const failed = await scan(r, 20 * 60_000);
   expect(failed.skills[0]!.meta.description).toBe("v2");
-  expect(failed.warnings.join("\n")).toContain("取主分支失败");
+  expect(failed.warnings.map((w) => w.text).join("\n")).toContain("取主分支失败");
 });
 
 test("a path that no longer holds the bound repository is skipped", async () => {
   const dir = repo("a", { ".agents/skills/tdd/SKILL.md": skillText("tdd") });
   const out = await scan({ ...bound(dir), gitCommonDir: join(base, "elsewhere", ".git") });
   expect(out.skills).toEqual([]);
-  expect(out.warnings.join("\n")).toContain("已不是绑定时的那个仓库");
+  expect(out.warnings.map((w) => w.text).join("\n")).toContain("已不是绑定时的那个仓库");
+  expect(out.warnings).toEqual([expect.objectContaining({ code: "skill.repo-moved", params: { repo: "web" } })]);
   expect((await scan({ ...bound(dir), gitCommonDir: join(dir, ".git") })).skills).toHaveLength(1);
 });
