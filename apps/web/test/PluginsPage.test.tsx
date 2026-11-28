@@ -712,6 +712,35 @@ describe("installing a skill from the page", () => {
     expect(within(block).getByText("インストールを取り消しました")).toBeTruthy();
   });
 
+  it("ignores a rediscovered install state that arrives after the poll sees it finish", async () => {
+    vi.mocked(hub.listExtensions).mockResolvedValue([...catalog, row({ id: "pdf", name: "pdf", kind: "skill", provision: "managed", installState: "installing" })]);
+    const pending: Array<(value: ReturnType<typeof job>) => void> = [];
+    vi.mocked(hub.getExtensionInstall)
+      .mockResolvedValueOnce(job("running", 1))
+      .mockImplementation(() => new Promise((resolve) => { pending.push(resolve); }));
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <PluginsPage pollMs={1} />
+      </I18nProvider>,
+    );
+    const block = (await screen.findByRole("heading", { name: "pdf", level: 3 })).closest("section")!;
+    expect(await within(block).findByText("Installing 1/3")).toBeTruthy();
+    // Let the poll's first status read start, then switch locale: its rediscovery starts too.
+    await waitFor(() => expect(hub.getExtensionInstall).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    });
+    await waitFor(() => expect(hub.getExtensionInstall).toHaveBeenCalledTimes(3));
+    // The poll sees the install finish first; the rediscovery is still pending.
+    await act(async () => { pending[0]!(job("installed", 3)); });
+    expect(await within(block).findByText("インストール完了")).toBeTruthy();
+    // The rediscovery's stale "running" answer must not revive the job.
+    await act(async () => { pending[1]!(job("running", 1)); });
+    expect(within(block).queryByText("インストール中 1/3")).toBeNull();
+    expect(within(block).getByText("インストール完了")).toBeTruthy();
+  });
+
   it("keeps polling after a status request fails once", async () => {
     vi.mocked(hub.resolveExtensionSource).mockResolvedValue(preview);
     vi.mocked(hub.installExtension).mockResolvedValue(job("running"));

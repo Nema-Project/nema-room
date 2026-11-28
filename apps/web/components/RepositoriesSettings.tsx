@@ -211,7 +211,14 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
       seq.current += 1;
     } catch (err) {
       removedRepoIds.current.delete(repoId);
-      setRepos(previous);
+      // Restore only the failed repo into the current list: a bind that settled while the
+      // unbind was pending must survive the failure, not be lost with the snapshot.
+      setRepos((list) => {
+        const failed = (previous ?? []).find((repo) => repo.id === repoId);
+        if (!failed) return list;
+        if (list === null) return previous;
+        return list.some((repo) => repo.id === repoId) ? list : [...list, failed];
+      });
       setFormError(hubErrorText(err, t));
     } finally {
       pendingMutations.current -= 1;

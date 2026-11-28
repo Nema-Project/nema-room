@@ -249,9 +249,16 @@ export function PluginsPage({ onClose, embedded = false, pollMs = 1000 }: { onCl
           getExtensionInstall(job.id)
             .then((next) => {
               if (!current()) return;
+              if (next.state === "running") {
+                show(next);
+                poll();
+                return;
+              }
+              // A rediscovery read that captured `running` may still be in flight; its answer
+              // must not revive this finished job.
+              generation.current.set(job.id, (generation.current.get(job.id) ?? 0) + 1);
               show(next);
-              if (next.state === "running") poll();
-              else settle(job.id);
+              settle(job.id);
             })
             .catch((e: unknown) => {
               if (!current()) return;

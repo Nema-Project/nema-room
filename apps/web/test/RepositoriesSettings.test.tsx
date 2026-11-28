@@ -396,6 +396,35 @@ describe("RepositoriesSettings", () => {
     expect(screen.queryByText("/tmp/removed")).toBeNull();
   });
 
+  it("keeps a bind that settled during a failed unbind and restores only the failed repo", async () => {
+    const removed = repo({ id: "r0", path: "/tmp/removed", label: "removed" });
+    const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });
+    vi.mocked(hub.listRepos).mockResolvedValue([removed]);
+    let resolveBind!: (value: Repo) => void;
+    vi.mocked(hub.bindRepo).mockImplementationOnce(() => new Promise<Repo>((resolve) => { resolveBind = resolve; }));
+    let rejectUnbind!: (error: Error) => void;
+    vi.mocked(hub.unbindRepo).mockImplementationOnce(() => new Promise<undefined>((_resolve, reject) => { rejectUnbind = reject; }));
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <RepositoriesSettings workspaceId="w1" onRepoBound={vi.fn()} />
+      </I18nProvider>,
+    );
+    expect(await screen.findByText("/tmp/removed")).toBeTruthy();
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    // Remove the existing repo while the bind is still pending.
+    await userEvent.click(screen.getByRole("button", { name: "Delete /tmp/removed" }));
+    expect(screen.queryByText("/tmp/removed")).toBeNull();
+    // The bind succeeds first, then the unbind fails: the bound repo must stay and the
+    // failed removal must come back, not wipe the list with the old snapshot.
+    await act(async () => { resolveBind(created); });
+    expect(await screen.findByText("/real/app")).toBeTruthy();
+    await act(async () => { rejectUnbind(new Error("unbind boom")); });
+    expect(await screen.findByText("/tmp/removed")).toBeTruthy();
+    expect(screen.getByText("/real/app")).toBeTruthy();
+  });
+
   it("asks for another name when the suggested label is taken and ignores a cancelled pick", async () => {
     mount();
     await screen.findByRole("button", { name: "Add repository" });
