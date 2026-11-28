@@ -133,6 +133,60 @@ describe("RepositoriesSettings", () => {
     expect(screen.getByText("/real/app")).toBeTruthy();
   });
 
+  it("keeps a reread list stashed during a bind after the first read failed", async () => {
+    const existing = repo({ id: "r0", path: "/tmp/existing", label: "existing" });
+    const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });
+    let resolveReread!: (rows: Repo[]) => void;
+    let resolveBind!: (value: Repo) => void;
+    vi.mocked(hub.listRepos)
+      .mockRejectedValueOnce(new Error("list boom"))
+      .mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveReread = resolve; }));
+    vi.mocked(hub.bindRepo).mockImplementationOnce(() => new Promise<Repo>((resolve) => { resolveBind = resolve; }));
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <RepositoriesSettings workspaceId="w1" onRepoBound={vi.fn()} />
+      </I18nProvider>,
+    );
+    // Wait for the first read to fail: only then is the list the empty placeholder.
+    expect((await screen.findByRole("alert")).textContent).toBe("list boom");
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    // A locale reread answers while the bind is pending, so its rows are stashed.
+    await userEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    await act(async () => { resolveReread([existing]); });
+    expect(screen.queryByText("/tmp/existing")).toBeNull();
+    await act(async () => { resolveBind(created); });
+    expect(await screen.findByText("/tmp/existing")).toBeTruthy();
+    expect(screen.getByText("/real/app")).toBeTruthy();
+    // No extra reload: the stashed rows were merged, so the list is already complete.
+    expect(hub.listRepos).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a reread list stashed during a failed bind after the first read failed", async () => {
+    const existing = repo({ id: "r0", path: "/tmp/existing", label: "existing" });
+    let resolveReread!: (rows: Repo[]) => void;
+    let rejectBind!: (err: Error) => void;
+    vi.mocked(hub.listRepos)
+      .mockRejectedValueOnce(new Error("list boom"))
+      .mockImplementationOnce(() => new Promise<Repo[]>((resolve) => { resolveReread = resolve; }));
+    vi.mocked(hub.bindRepo).mockImplementationOnce(() => new Promise<Repo>((_resolve, reject) => { rejectBind = reject; }));
+    render(
+      <I18nProvider>
+        <LocaleSwitcher />
+        <RepositoriesSettings workspaceId="w1" onRepoBound={vi.fn()} />
+      </I18nProvider>,
+    );
+    expect((await screen.findByRole("alert")).textContent).toBe("list boom");
+    await choose();
+    await userEvent.click(screen.getByRole("button", { name: "Add repository" }));
+    await userEvent.click(screen.getByRole("button", { name: "switch locale" }));
+    await act(async () => { resolveReread([existing]); });
+    await act(async () => { rejectBind(new Error("bind boom")); });
+    expect(await screen.findByText("/tmp/existing")).toBeTruthy();
+    expect((await screen.findByRole("alert")).textContent).toBe("bind boom");
+  });
+
   it("reloads the initial list when the bind succeeds before it answers", async () => {
     const existing = repo({ id: "r0", path: "/tmp/existing", label: "existing" });
     const created = repo({ id: "r1", path: "/real/app", label: "app", mainBranch: "develop", remoteUrl: preview.remoteUrl });

@@ -35,6 +35,8 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
   // A list response dropped for the reason above, kept so the list it carried is not lost: when
   // the initial load answers while a bind is pending, the bind's success handler would otherwise
   // append the new repo to an empty list and hide every existing repo until another reread.
+  // A failed initial read leaves an empty placeholder list, so a non-null list must not be
+  // treated as authoritative when merging these rows back in.
   const droppedList = useRef<Repo[] | null>(null);
   // Whether a list read has produced rows that reached the screen (applied directly or stashed
   // for the pending mutation to merge). Until the first read lands, a bind that succeeds first
@@ -131,10 +133,19 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
       const created = await bindRepo(workspaceId, { path: preview.root, label: trimmedLabel, mainBranch: preview.defaultBranch });
       seq.current += 1;
       // The initial load may have answered while this bind was pending; merge its rows instead
-      // of appending to an empty list.
+      // of appending to an empty list. A failed initial read leaves an empty placeholder, so
+      // merge the stash even when the list is non-null; rows already on screen win, and the
+      // new repo is appended unless the stash already carries it.
       const stashed = droppedList.current;
       droppedList.current = null;
-      setRepos((list) => [...(list ?? stashed ?? []), created]);
+      setRepos((list) => {
+        const merged = [...(list ?? [])];
+        for (const row of stashed ?? []) {
+          if (!merged.some((existing) => existing.id === row.id)) merged.push(row);
+        }
+        if (!merged.some((existing) => existing.id === created.id)) merged.push(created);
+        return merged;
+      });
       // Binding starts the repository's graph build: the first real Graphify call, so the offer may open here.
       onRepoBound();
       setPreview(null);
@@ -145,10 +156,11 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
     } finally {
       pendingMutations.current -= 1;
       // A failed bind must not leave the list empty when the initial load already answered.
+      // A failed initial read leaves an empty placeholder, so the stash applies there too.
       if (droppedList.current !== null) {
         const stashed = droppedList.current;
         droppedList.current = null;
-        setRepos((list) => list ?? stashed);
+        setRepos((list) => (list === null || list.length === 0 ? stashed : list));
       }
       // When the first list read has not landed yet, the stale initial response will be
       // discarded, so reload to recover the existing repos.
