@@ -43,6 +43,12 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
   // leaves only the new repo on screen: the stale initial response is discarded by the
   // generation check, so the bind must reload to recover the existing repos.
   const listLoaded = useRef(false);
+  // Ids removed optimistically whose unbind has not failed: any list response that predates
+  // the removal must not bring them back, whichever order the overlapping calls settle in
+  // (a stash merged by a bind, a failed-bind fallback, a reload). A failed unbind drops
+  // the id again, so the restored row can be merged normally. Re-binding the same path
+  // mints a new id, so keeping confirmed ids here is safe.
+  const removedRepoIds = useRef(new Set<string>());
 
   useEffect(() => {
     let cancel = false;
@@ -97,7 +103,7 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
   async function reloadList() {
     const mine = ++seq.current;
     try {
-      const rows = await listRepos(workspaceId);
+      const rows = (await listRepos(workspaceId)).filter((row) => !removedRepoIds.current.has(row.id));
       if (mine !== seq.current) return;
       if (pendingMutations.current > 0) {
         droppedList.current = rows;
@@ -135,12 +141,13 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
       // The initial load may have answered while this bind was pending; merge its rows instead
       // of appending to an empty list. A failed initial read leaves an empty placeholder, so
       // merge the stash even when the list is non-null; rows already on screen win, and the
-      // new repo is appended unless the stash already carries it.
-      const stashed = droppedList.current;
+      // new repo is appended unless the stash already carries it. Rows removed by an
+      // overlapping unbind are skipped: the stash predates that removal.
+      const stashed = (droppedList.current ?? []).filter((row) => !removedRepoIds.current.has(row.id));
       droppedList.current = null;
       setRepos((list) => {
         const merged = [...(list ?? [])];
-        for (const row of stashed ?? []) {
+        for (const row of stashed) {
           if (!merged.some((existing) => existing.id === row.id)) merged.push(row);
         }
         if (!merged.some((existing) => existing.id === created.id)) merged.push(created);
@@ -157,8 +164,9 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
       pendingMutations.current -= 1;
       // A failed bind must not leave the list empty when the initial load already answered.
       // A failed initial read leaves an empty placeholder, so the stash applies there too.
+      // Rows removed by an overlapping unbind are skipped: the stash predates that removal.
       if (droppedList.current !== null) {
-        const stashed = droppedList.current;
+        const stashed = droppedList.current.filter((row) => !removedRepoIds.current.has(row.id));
         droppedList.current = null;
         setRepos((list) => (list === null || list.length === 0 ? stashed : list));
       }
@@ -187,6 +195,7 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
     const previous = repos;
     seq.current += 1;
     pendingMutations.current += 1;
+    removedRepoIds.current.add(repoId);
     setRepos((list) => list?.filter((repo) => repo.id !== repoId) ?? null);
     try {
       await unbindRepo(workspaceId, repoId);
@@ -195,9 +204,13 @@ export function RepositoriesSettings({ workspaceId, onRepoBound }: { workspaceId
       if (droppedList.current !== null) {
         droppedList.current = droppedList.current.filter((row) => row.id !== repoId);
       }
+      // A bind that settled first may already have merged such a stash back onto the
+      // screen; the confirmed removal still stands.
+      setRepos((list) => list?.filter((repo) => repo.id !== repoId) ?? null);
       // A reread started while the unbind was pending may still return the old server list.
       seq.current += 1;
     } catch (err) {
+      removedRepoIds.current.delete(repoId);
       setRepos(previous);
       setFormError(hubErrorText(err, t));
     } finally {
