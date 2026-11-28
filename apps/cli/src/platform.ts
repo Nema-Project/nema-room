@@ -26,13 +26,14 @@ export function windowsRuntimeEnv(parent: NodeJS.ProcessEnv): NodeJS.ProcessEnv 
  * The paths a command name may resolve to, in lookup order. On Windows these are exactly the candidates
  * `commandSpec` walks (case-insensitive `Path`, `;`-separated, `.exe .com .cmd .bat` then the bare name). On
  * POSIX `commandSpec` leaves the lookup to the OS, so this is the plain `PATH` walk `execvp` does: each
- * non-empty directory, no extensions, and a name with a slash is taken as given.
+ * directory — an empty entry means the current directory — no extensions, and a name with a slash is taken
+ * as given.
  */
 export function commandPathCandidates(bin: string, env: NodeJS.ProcessEnv = process.env, platform = process.platform): string[] {
   const searchPath = Object.entries(env).find(([key]) => platform === "win32" ? key.toLowerCase() === "path" : key === "PATH")?.[1] ?? "";
   if (platform !== "win32") {
     if (bin.includes("/")) return [bin];
-    return searchPath.split(":").filter((dir) => dir !== "").map((dir) => path.posix.join(dir, bin));
+    return searchPath.split(":").map((dir) => (dir === "" ? `./${bin}` : path.posix.join(dir, bin)));
   }
   const p = path.win32;
   const dirs = p.isAbsolute(bin) || /[/\\]/.test(bin) ? [""] : searchPath.split(";");

@@ -10,6 +10,7 @@ import {
   commandOnSearchPath,
   detectAgentClis,
   executeVersion,
+  runVersion,
   type VersionResult,
 } from "../src/agentClis.js";
 import { commandPathCandidates } from "../src/platform.js";
@@ -43,6 +44,22 @@ describe("executeVersion splits the outcome", () => {
   });
 });
 
+describe("runVersion: a child that outlives the timeout is a timeout even when it exits 0", () => {
+  // Synthetic node children, not agent CLIs; the timeout is shortened to 500ms through runVersion's
+  // second parameter (long enough for a node child to start under load) so the trap case does not
+  // wait out the real 10s probe timeout.
+  test("a child that traps SIGTERM and exits 0 after the timer fired", async () => {
+    const script = path.join(root, "trap-sigterm.cjs");
+    writeFileSync(script, "process.on('SIGTERM', () => process.exit(0));\nsetTimeout(() => {}, 5000);\n");
+    await expect(executeVersion((command) => runVersion(command, 500))(script)).resolves.toEqual({ kind: "timeout" });
+  });
+  test("a child that exits 0 before the timer is still ok", async () => {
+    const script = path.join(root, "fast.cjs");
+    writeFileSync(script, "process.stdout.write('9.9.9\\n');\n");
+    await expect(executeVersion((command) => runVersion(command, 500))(script)).resolves.toEqual({ kind: "ok", version: "9.9.9" });
+  });
+});
+
 describe("detectAgentClis keeps its mapping (D-7 regression)", () => {
   test.each([
     ["ENOENT", enoent],
@@ -72,6 +89,9 @@ describe("commandPathCandidates follows commandSpec's lookup rules", () => {
   test("POSIX: each PATH directory, no extensions", () => {
     expect(commandPathCandidates("claude", { PATH: "/a:/b" }, "linux")).toEqual(["/a/claude", "/b/claude"]);
   });
+  test("POSIX: an empty PATH entry means the current directory", () => {
+    expect(commandPathCandidates("claude", { PATH: ":/usr/bin" }, "linux")).toEqual(["./claude", "/usr/bin/claude"]);
+  });
   test("POSIX: a command with a directory part is the only candidate", () => {
     expect(commandPathCandidates("./bin/claude", { PATH: "/a" }, "darwin")).toEqual(["./bin/claude"]);
   });
@@ -98,6 +118,16 @@ describe("commandOnSearchPath only looks at directory entries", () => {
     mkdirSync(path.join(root, "bin"));
     symlinkSync(path.join(root, "gone", "claude.js"), path.join(root, "bin", "claude"));
     expect(commandOnSearchPath("claude", { PATH: path.join(root, "bin") })).toBe(true);
+  });
+  test.runIf(canSymlinkFiles && process.platform !== "win32")("an empty PATH entry looks in the current directory", () => {
+    symlinkSync(path.join(root, "gone"), path.join(root, "claude"));
+    const cwd = process.cwd();
+    try {
+      process.chdir(root);
+      expect(commandOnSearchPath("claude", { PATH: `:${path.join(root, "bin")}` })).toBe(true);
+    } finally {
+      process.chdir(cwd);
+    }
   });
 });
 

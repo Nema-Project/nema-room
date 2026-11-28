@@ -25,14 +25,27 @@ export const AGENT_CLIS: ReadonlyArray<{ id: AgentCliId; command: string; instal
   { id: "claude-code", command: "claude", installUrl: "https://code.claude.com/docs/en/setup" },
 ];
 
+const VERSION_TIMEOUT_MS = 10_000;
+
 /** Runs `<command> --version` and resolves with its stdout; rejects with the spawn error as Node reports it. */
 export type VersionRunner = (command: string) => Promise<string>;
 
-const runVersion: VersionRunner = async (command) => {
+export async function runVersion(command: string, timeoutMs: number = VERSION_TIMEOUT_MS): Promise<string> {
   const spec = commandSpec(command, ["--version"]);
-  const { stdout } = await execFileAsync(spec.bin, spec.args, { timeout: 10_000, windowsHide: true });
-  return stdout;
-};
+  // execFile resolves successfully when the child traps the kill signal and exits 0, so track the timer
+  // separately: a probe that outlived the timeout is a timeout whatever the exit status.
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; }, timeoutMs);
+  try {
+    const { stdout } = await execFileAsync(spec.bin, spec.args, { timeout: timeoutMs, windowsHide: true });
+    if (timedOut) {
+      throw Object.assign(new Error(`Command timed out after ${timeoutMs}ms: ${spec.bin} --version`), { killed: true, signal: "SIGTERM" });
+    }
+    return stdout;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * One `--version` answer, split by how it ended (#302 D-4). `enoent` is the spawn itself failing to find a
@@ -60,7 +73,8 @@ export function executeVersion(run: VersionRunner = runVersion): VersionExecutor
     } catch (e) {
       const err = e as (NodeJS.ErrnoException & { killed?: boolean; signal?: string | null }) | null | undefined;
       if (err?.code === "ENOENT") return { kind: "enoent" };
-      // execFile's `timeout` kills the child and rejects with `killed` and the signal it sent.
+      // execFile's `timeout` kills the child and rejects with `killed` and the signal it sent; runVersion
+      // throws the same shape when the child traps the signal and exits 0 after the timer fired.
       if (err?.killed === true && typeof err.signal === "string") return { kind: "timeout" };
       return { kind: "error" };
     }
