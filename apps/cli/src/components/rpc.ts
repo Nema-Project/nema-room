@@ -8,6 +8,8 @@ import { readLock, resolveTarget, shippedLockPath } from "./lock.js";
 import { assertComponent, componentRoot, componentStatusSync, isOffline, type ComponentEnv } from "./store.js";
 import type { ComponentName, ComponentStatus } from "./types.js";
 import type { RpcRouter } from "../daemon/rpc.js";
+import type { ReadinessReply } from "@nema/shared";
+import type { VersionProbe } from "../agentClis.js";
 
 export const PYTHON_MIRROR_ENV = "NEMA_GRAPHIFY_PYTHON_MIRROR";
 export const PYPI_BASE_ENV = "NEMA_GRAPHIFY_PYPI_BASE";
@@ -128,6 +130,12 @@ export type ComponentRpcOptions = {
   install?: (name: string, o: InstallOptions) => Promise<ComponentStatus>;
   /** Agent CLI detection for the settings page (detection and guidance only). */
   detectAgents?: () => Promise<unknown>;
+  /** First-run readiness (#302); tests pass a fake. Defaults to `computeReadiness` over this home. */
+  readiness?: (o: { force: boolean }) => Promise<ReadinessReply>;
+  /** The Codex CLI home a compat login is read from; defaults to `$CODEX_HOME` or `~/.codex`, as the adapters do. */
+  codexHome?: string;
+  /** The `--version` probe readiness shares across calls (30-second success cache); tests pass a fake executor. */
+  versionProbe?: VersionProbe;
 };
 
 function nameParam(params: unknown): ComponentName {
@@ -138,8 +146,8 @@ function nameParam(params: unknown): ComponentName {
 }
 
 /**
- * Registers `components.status`, `components.install`, `components.cancel`, `components.configure` and
- * `agents.detect`. An install runs in the background and is followed through `components.status`, whose
+ * Registers `components.status`, `components.install`, `components.cancel`, `components.configure`,
+ * `agents.detect` and `agents.readiness`. An install runs in the background and is followed through `components.status`, whose
  * `installing` state carries its progress; the RPC that starts it answers at once.
  */
 export function registerComponentHandlers(rpc: RpcRouter, o: ComponentRpcOptions): { close(): Promise<void> } {
@@ -229,6 +237,22 @@ export function registerComponentHandlers(rpc: RpcRouter, o: ComponentRpcOptions
   rpc.register("agents.detect", async () => {
     const detect = o.detectAgents ?? (async () => (await import("../agentClis.js")).detectAgentClis());
     return { agents: await detect() };
+  });
+
+  // One probe for the daemon's lifetime, so the success cache and the shared in-flight probe span calls.
+  let probe: VersionProbe | undefined = o.versionProbe;
+  rpc.register("agents.readiness", async (params) => {
+    const raw = (params && typeof params === "object" ? params : {}) as { force?: unknown };
+    if (raw.force !== undefined && typeof raw.force !== "boolean") throw new Error("invalid force");
+    const force = raw.force === true;
+    if (o.readiness) return o.readiness({ force });
+    const [{ computeReadiness }, { VersionProbe: Probe }, { defaultCodexHome }] = await Promise.all([
+      import("../agents/readiness.js"),
+      import("../agentClis.js"),
+      import("../direct/codexLogin.js"),
+    ]);
+    probe ??= new Probe();
+    return computeReadiness({ nemaHome: o.nemaHome, codexHome: o.codexHome ?? defaultCodexHome(), config: config(), force, probe });
   });
 
   return {

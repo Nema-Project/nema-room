@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { detectAgentClis } from "../../src/agentClis.js";
+import type { ReadinessReply } from "@nema/shared";
+import { VersionProbe, detectAgentClis, type VersionResult } from "../../src/agentClis.js";
 import { componentProcessEnv, registerComponentHandlers, type ComponentRpcOptions, type ComponentView } from "../../src/components/rpc.js";
 import { installComponent, type InstallOptions } from "../../src/components/install.js";
 import { lockHash } from "../../src/components/lock.js";
@@ -305,5 +306,44 @@ describe("agent CLI detection", () => {
     const detectAgents = vi.fn(async () => [{ id: "codex", installed: true }]);
     const { call } = setup({ detectAgents });
     expect(await call("agents.detect")).toEqual({ agents: [{ id: "codex", installed: true }] });
+  });
+});
+
+describe("agent readiness (#302)", () => {
+  test("agents.readiness passes force through to the injected computation", async () => {
+    const reply = { current: "codex-direct", runtimes: [], checkedAt: "2026-11-27T00:00:00.000Z" };
+    const readiness = vi.fn(async (_o: { force: boolean }) => reply as ReadinessReply);
+    const { call } = setup({ readiness });
+    expect(await call("agents.readiness")).toEqual(reply);
+    expect(await call("agents.readiness", { force: true })).toEqual(reply);
+    expect(readiness.mock.calls.map(([o]) => o.force)).toEqual([false, true]);
+  });
+
+  test("agents.readiness refuses a force that is not a boolean", async () => {
+    const { call } = setup({ readiness: async () => ({}) as never });
+    await expect(call("agents.readiness", { force: "yes" })).rejects.toThrow(/force/);
+  });
+
+  test("agents.readiness computes from this daemon's home with the shared probe, and agents.detect is untouched", async () => {
+    const execute = vi.fn(async (): Promise<VersionResult> => ({ kind: "ok", version: "2.1.400 (Claude Code)" }));
+    const detectAgents = vi.fn(async () => [{ id: "claude-code", installed: false }]);
+    const { call } = setup({ versionProbe: new VersionProbe({ execute }), codexHome: path.join(root, "codex"), detectAgents });
+    const reply = (await call("agents.readiness")) as ReadinessReply;
+    expect(reply.current).toBe("codex-direct");
+    expect(Number.isNaN(Date.parse(reply.checkedAt))).toBe(false);
+    expect(reply.runtimes).toEqual([
+      { runtime: "codex-direct", state: "not_signed_in", account: { id: "acct_0000000000", implicit: true, authMode: "siwc" } },
+      {
+        runtime: "claude-code", state: "not_signed_in", reason: "no_enabled_account",
+        cli: { command: "claude", version: "2.1.400 (Claude Code)", installUrl: "https://code.claude.com/docs/en/setup" },
+      },
+    ]);
+    // The cached ok answer is reused by an ordinary call and bypassed by force.
+    await call("agents.readiness");
+    expect(execute).toHaveBeenCalledTimes(1);
+    await call("agents.readiness", { force: true });
+    expect(execute).toHaveBeenCalledTimes(2);
+    // The components page path still goes through its own detector, not the readiness cache.
+    expect(await call("agents.detect")).toEqual({ agents: [{ id: "claude-code", installed: false }] });
   });
 });
