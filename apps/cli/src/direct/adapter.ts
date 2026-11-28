@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { PROGRESS, type RouteDecision, type TaskAssign, type TaskEvent } from "@nema/shared";
+import { PROGRESS, type CodeParams, type RouteDecision, type TaskAssign, type TaskEvent } from "@nema/shared";
 import { attachmentCapabilities, refusal } from "../attachments/capabilities.js";
 import { attachmentLabel, attachmentPreamble, textAttachmentBlock } from "../attachments/blocks.js";
 import { loadTaskAttachments, type LoadedAttachment } from "../attachments/fetch.js";
-import { configErrorMessage, loadConfig, type NemaConfig } from "../config.js";
+import { configError, loadConfig, type NemaConfig } from "../config.js";
+import { failureFields } from "../routing/messages.js";
 import type { AgentAdapter, AgentResult } from "../daemon/runner.js";
 import type { Account } from "../accounts/schema.js";
 import { RoomClient } from "../room/client.js";
@@ -81,9 +82,14 @@ function providerRetryAfterMs(e: unknown, now: number): number | undefined {
   return undefined;
 }
 
-/** A route that cannot run: the sentence names the account and what is wrong with it. */
+/** A route that cannot run: the sentence names the account and what is wrong with it, and the code says the same. */
 function routeFailure(result: Extract<RouteResult, { ok: false }>): AgentResult {
-  return { ok: false, error: result.error };
+  return { ok: false, error: result.error, code: result.code, ...(result.params ? { params: result.params } : {}) };
+}
+
+/** A failed run's text, with the code of a routing, credential or config error when it has one (#299 batch 3a). */
+function failed(e: unknown): { error: string; code?: string; params?: CodeParams } {
+  return { error: errorMessage(e), ...failureFields(e) };
 }
 
 /**
@@ -328,7 +334,7 @@ export class CodexDirectAdapter implements AgentAdapter {
     try {
       config = loadConfig(this.opts.nemaHome);
     } catch (e) {
-      return { ok: false, error: configErrorMessage(e) };
+      return { ok: false, ...failed(configError(e)) };
     }
     // An attachment this adapter cannot hand over fails the task before any routing or request (D-2). It is
     // about the adapter, not the account: the account's own declaration is the candidate filter's business.
@@ -337,14 +343,14 @@ export class CodexDirectAdapter implements AgentAdapter {
 
     const codexHome = this.opts.codexHome ?? defaultCodexHome();
     let picked: RoutingAccounts | null = null;
-    let routeError: string | null = null;
+    let routeError: ReturnType<typeof failed> | null = null;
     try {
       picked = this.accountSet(config);
     } catch (e) {
       // An unreadable account file is reported here rather than swallowed into "no account".
-      routeError = e instanceof Error ? e.message : String(e);
+      routeError = failed(e);
     }
-    if (!picked) return { ok: false, error: routeError ?? "无法读取账户设置" };
+    if (!picked) return { ok: false, ...(routeError ?? { error: "无法读取账户设置" }) };
     const route = resolveRoute({
       task,
       config,
@@ -380,7 +386,7 @@ export class CodexDirectAdapter implements AgentAdapter {
         onEvent,
       });
     } catch (e) {
-      return { ok: false, error: errorMessage(e), route: routeDecision(route, route.model) };
+      return { ok: false, ...failed(e), route: routeDecision(route, route.model) };
     }
 
     const ac = new AbortController();
@@ -410,7 +416,7 @@ export class CodexDirectAdapter implements AgentAdapter {
         // provider ever saw.
         clearTimeout(timer);
         ownerSignal?.removeEventListener("abort", abortFromOwner);
-        return { ok: false, error: errorMessage(e), route: plan.decision(plan.session.model ?? plan.session.configured) };
+        return { ok: false, ...failed(e), route: plan.decision(plan.session.model ?? plan.session.configured) };
       }
     }
     if (ownerSignal?.aborted) {
@@ -427,9 +433,11 @@ export class CodexDirectAdapter implements AgentAdapter {
       const cause = ac.signal.reason instanceof RunTimeoutError ? ac.signal.reason : e;
       // The route is recorded even though the task failed: "which account failed" is exactly what someone
       // reading this conversation later will ask, and the reply that would have carried it never came.
+      // An attachment rejection is its own sentence (#299 batch 3b); the cause's code would describe another one.
+      const rejected = attachmentRejection(cause, task.attachments ?? [], sent.blocks);
       return {
         ok: false,
-        error: attachmentRejection(cause, task.attachments ?? [], sent.blocks) ?? errorMessage(cause),
+        ...(rejected !== null ? { error: rejected } : failed(cause)),
         // `sent.model` is what reached the provider; nothing set it, so the run never got as far as a
         // request and the setting of the account it ended on is the honest answer.
         route: plan.decision(sent.model ?? plan.session.model ?? plan.session.configured),
@@ -465,7 +473,7 @@ export class CodexDirectAdapter implements AgentAdapter {
     try {
       config = loadConfig(this.opts.nemaHome);
     } catch (e) {
-      throw new Error(configErrorMessage(e), { cause: e });
+      throw configError(e);
     }
     const loaded = await loadTaskAttachments(task, attachmentCapabilities({ ...config, adapter: "codex-direct" }), signal);
     if (!loaded.ok) throw new Error(loaded.error);

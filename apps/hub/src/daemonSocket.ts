@@ -544,7 +544,8 @@ export function attachDaemonSocket(server: http.Server, deps: DaemonSocketDeps):
       if (route) meta.route = route;
       msg = await saveTaskOutcome(routing, a.runToken, { ok: true }, "agent", m.reply, meta);
     } else {
-      msg = await saveTaskFailure(m.taskId, m.error, a.runToken, route);
+      // An older daemon sends no code, and a malformed one is dropped: either way `content` keeps the text.
+      msg = await saveTaskFailure(m.taskId, m.error, a.runToken, route, readCoded(m.errorCode, m.errorParams));
     }
     if (!msg) {
       conn.assigned = null;

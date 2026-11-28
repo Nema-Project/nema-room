@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { CodedError, DAEMON_ERROR, MIRROR_URL_ERROR } from "@nema/shared";
+import { CodedError, DAEMON_ERROR, MIRROR_URL_ERROR, TASK_ERROR } from "@nema/shared";
 import { protectPrivatePath } from "./secrets/permissions.js";
 
 export const DEFAULT_BYOK_BASE_URL = "https://api.openai.com/v1";
@@ -74,11 +74,32 @@ export const DEFAULT_CONFIG: Readonly<NemaConfig> = Object.freeze({ adapter: "co
 
 /** A user-facing Chinese message for an unreadable config.json (bad JSON or schema), without zod/stack noise. */
 export function configErrorMessage(e: unknown): string {
+  return configError(e).message;
+}
+
+/**
+ * The same failure as a coded error (#299 batch 3a): the message is `configErrorMessage`'s fallback text, and
+ * the code and params let a task failure show it in the user's language. The params never carry the Chinese
+ * wording: a schema problem is its path and zod's own (English) message, bad JSON is the parser's message,
+ * and the one Chinese sentence this module writes into an issue, the BYOK base URL rule, has a code of its own.
+ */
+export function configError(e: unknown): CodedError {
   let detail: string;
-  if (e instanceof z.ZodError) detail = e.issues.map((i) => `${i.path.join(".") || "(根)"}：${i.message}`).join("；");
+  const issues = e instanceof z.ZodError ? e.issues : [];
+  if (e instanceof z.ZodError) detail = issues.map((i) => `${i.path.join(".") || "(根)"}：${i.message}`).join("；");
   else if (e instanceof SyntaxError) detail = `不是合法的 JSON（${e.message}）`;
   else detail = e instanceof Error ? e.message : String(e);
-  return `配置文件 ~/.nema/config.json 无法读取：${detail}`;
+  const message = `配置文件 ~/.nema/config.json 无法读取：${detail}`;
+  // A transform that throws may surface as the raw error or as a zod issue carrying its message.
+  const byokUrl = (e instanceof Error && e.message === BYOK_BASE_URL_ERROR) || issues.some((i) => i.message === BYOK_BASE_URL_ERROR);
+  const cause = { cause: e };
+  if (byokUrl) return new CodedError(TASK_ERROR.configByokBaseUrl, message, undefined, cause);
+  if (e instanceof z.ZodError) {
+    const issueList = issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
+    return new CodedError(TASK_ERROR.configInvalid, message, { detail: issueList }, cause);
+  }
+  if (e instanceof SyntaxError) return new CodedError(TASK_ERROR.configInvalidJson, message, { detail: e.message }, cause);
+  return new CodedError(TASK_ERROR.configUnreadable, message, { detail: e instanceof Error ? e.message : String(e) }, cause);
 }
 
 const configFile = (nemaHome: string) => path.join(nemaHome, "config.json");

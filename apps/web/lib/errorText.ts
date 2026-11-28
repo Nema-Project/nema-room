@@ -1,4 +1,4 @@
-import { DAEMON_ERROR, isErrorCode, readCodeParams, type CodeParams, type CodedText } from "@nema/shared";
+import { DAEMON_ERROR, EXCLUSION_REASONS, isErrorCode, readCodeParams, TASK_ERROR, type CodeParams, type CodedText } from "@nema/shared";
 import { graphifyErrorText } from "./graphifyText";
 import type { HubError } from "./hub";
 import type { useT } from "./i18n";
@@ -36,6 +36,38 @@ export function hubErrorText(err: unknown, t: T): string {
     if (text !== null) return text;
   }
   return err.message;
+}
+
+const NEEDS: ReadonlySet<string> = new Set(["image", "pdf"]);
+
+/**
+ * The params an error's message is filled with, in the page's language, or null when they cannot be read.
+ *
+ * Params are flat, so a refusal that lists accounts by reason or names the attachment kinds sends them as plain
+ * values and the words are added here (#299 batch 3a), the way `progressText` words a switch's reason:
+ *   - `route.refusal.no-candidate-excluded`: one param per `EXCLUSION_REASONS` entry, holding account names,
+ *     becomes `{excluded}`, each group worded by `route.exclusion.<reason>`;
+ *   - `route.refusal.no-capable-account`: `needs` (`image`, `pdf`, `image,pdf`) is worded by `route.need.<need>`.
+ * An unknown value or a missing entry returns null, so the caller shows the stored text instead.
+ */
+export function expandErrorParams(code: string, params: CodeParams, t: T): CodeParams | null {
+  if (code === TASK_ERROR.routeNoCandidateExcluded) {
+    const groups: (string | null)[] = [];
+    for (const reason of EXCLUSION_REASONS) {
+      const accounts = params[reason];
+      if (typeof accounts === "string" && accounts !== "") groups.push(lookup(t, `route.exclusion.${reason}`, { accounts }));
+    }
+    if (groups.length === 0 || groups.includes(null)) return null;
+    return { ...params, excluded: groups.join(t("progress.separator")) };
+  }
+  if (code === TASK_ERROR.routeNoCapableAccount) {
+    const needs = typeof params.needs === "string" ? params.needs.split(",") : [];
+    if (needs.length === 0 || !needs.every((need) => NEEDS.has(need))) return null;
+    const words = needs.map((need) => lookup(t, `route.need.${need}`));
+    if (words.includes(null)) return null;
+    return { ...params, needs: words.join(t("route.need.separator")) };
+  }
+  return params;
 }
 
 /** One localisable line: `progress.<code>` when the catalog has it, else the fallback text. */

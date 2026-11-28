@@ -94,7 +94,8 @@ test("the daemon's runner registers both adapters, direct first, and defaults to
   // no login in the temp home -> the direct adapter answers (and never falls back to codex-cli)
   return new Promise<void>((done) =>
     runner.enqueue(t, () => {}, (r) => {
-      expect(r).toEqual({ ok: false, error: "未登录直连 Codex，请在终端运行 nema auth login" });
+      // #299 batch 3a: the routing refusal also carries its code for the web.
+      expect(r).toEqual({ ok: false, error: "未登录直连 Codex，请在终端运行 nema auth login", code: "auth.not-logged-in" });
       done();
     }),
   );

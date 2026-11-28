@@ -9,7 +9,7 @@ import WebSocket, { WebSocketServer } from "ws";
 import { DAEMON_CREDENTIAL_REVOKED_MESSAGE, type TaskAssign } from "@nema/shared";
 import { DAEMON_FEATURES } from "../src/attachments/capabilities.js";
 import { connectDaemon, VERSION_SKEW_ERROR } from "../src/daemon/connection.js";
-import { Runner, type AgentAdapter } from "../src/daemon/runner.js";
+import { Runner, type AgentAdapter, type AgentResult } from "../src/daemon/runner.js";
 
 let server: http.Server;
 let wss: WebSocketServer;
@@ -118,6 +118,30 @@ describe("daemon connection", () => {
     const fin2 = nextMsg(ws2, "task.finished");
     ws2.send(JSON.stringify(task("t2")));
     expect(await fin2).toEqual({ type: "task.finished", taskId: "t2", ok: true, reply: "ok" });
+  });
+
+  test("a coded failure sends errorCode and errorParams, and an uncoded one sends the old shape (#299 batch 3a)", async () => {
+    const port = await start();
+    const results: AgentResult[] = [
+      { ok: false, error: "这台机器上没有启用的 claude-code 账户。", code: "route.refusal.no-account", params: { adapter: "claude-code" } },
+      { ok: false, error: "自动路由未开启。", code: "route.refusal.auto-unavailable" },
+      { ok: false, error: "boom" },
+    ];
+    const coded: AgentAdapter = { name: "codex-direct", async run() { return results.shift()!; } };
+    const hello = new Promise<any>((resolve) => wss.on("connection", (ws) => nextMsg(ws, "hello").then(resolve)));
+    const d = connectDaemon({ hubUrl: `http://127.0.0.1:${port}`, token: "tk", runner: new Runner([coded]) });
+    closers.push(() => d.close());
+    await hello;
+    const ws = await waitConn(1);
+    for (const [id, expected] of [
+      ["t1", { error: "这台机器上没有启用的 claude-code 账户。", errorCode: "route.refusal.no-account", errorParams: { adapter: "claude-code" } }],
+      ["t2", { error: "自动路由未开启。", errorCode: "route.refusal.auto-unavailable" }],
+      ["t3", { error: "boom" }],
+    ] as const) {
+      const fin = nextMsg(ws, "task.finished");
+      ws.send(JSON.stringify(task(id)));
+      expect(await fin).toEqual({ type: "task.finished", taskId: id, ok: false, ...expected });
+    }
   });
 
   test("hello advertises exactly the daemon's features", async () => {

@@ -8,7 +8,7 @@ import type { Db } from "../src/db/db.js";
 import { EventBus } from "../src/events.js";
 import { createWorkspace, updateWorkspace } from "../src/workspaces.js";
 import { addMessage, deliverySet, editUserMessage, listMessages, listThreadMessages, messageExcerpt, postUserMessage, type AgentMessage } from "../src/messages.js";
-import { AttachmentRefSchema } from "@nema/shared";
+import { AttachmentRefSchema, TASK_ERROR } from "@nema/shared";
 import { png, uploadPng } from "./attachmentFixtures.js";
 import { claimNextTask, finishTask, getTask, insertQueuedTask, interruptRunning, recordTaskChange, resolveRunToken, toUiTask } from "../src/tasks.js";
 import * as tasks from "../src/tasks.js";
@@ -1014,6 +1014,26 @@ describe("daemon socket", () => {
     expect(sys.content).toBe("Processing failed: boom");
     expect(sys.meta).toEqual({ notice: { code: "task.failed" } });
     expect((await getTask(db, a.task.id))?.status).toBe("failed");
+  });
+
+  test("a coded failure stores its code as the notice reason, and a malformed code is dropped (#299 batch 3a)", async () => {
+    const a = await postUserMessage(db, wsA, "a", { authorUserId: "usr_local" });
+    const b = await postUserMessage(db, wsB, "b", { authorUserId: "usr_local" });
+    const c = await connect();
+    await c.next("task.assign");
+    c.send({
+      type: "task.finished", taskId: a.task.id, ok: false, error: "账户「工作」还没有凭据，请在设置页填写后再运行。",
+      errorCode: TASK_ERROR.routeCredentialMissing, errorParams: { account: "工作", nested: { no: 1 } },
+    });
+    expect((await c.next("task.assign")).taskId).toBe(b.task.id);
+    const sysA = (await listMessages(db, wsA)).find((m) => m.role === "system")!;
+    // `content` keeps the daemon's text as the fallback; only flat params survive beside the reason.
+    expect(sysA.content).toBe("Processing failed: 账户「工作」还没有凭据，请在设置页填写后再运行。");
+    expect(sysA.meta).toEqual({ notice: { code: "task.failed", params: { account: "工作", reason: "route.refusal.credential-missing" } } });
+    c.send({ type: "task.finished", taskId: b.task.id, ok: false, error: "boom", errorCode: "Not A Code!", errorParams: { x: "y" } });
+    await vi.waitFor(async () => expect((await listMessages(db, wsB)).some((m) => m.role === "system")).toBe(true));
+    const sysB = (await listMessages(db, wsB)).find((m) => m.role === "system")!;
+    expect(sysB.meta).toEqual({ notice: { code: "task.failed" } });
   });
 
   test("a dispatch race requeues without spending a retry", async () => {

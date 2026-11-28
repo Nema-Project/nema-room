@@ -429,6 +429,17 @@ export function openPrivateFile(file: string): number {
 }
 
 /**
+ * `openPrivateFileChecked`'s refusal. A class of its own so a caller can name the refusal in its own terms
+ * (the Codex login reader gives it a UI code, #299 batch 3a) without matching the sentence.
+ */
+export class NotPrivateFileError extends Error {
+  constructor(readonly file: string) {
+    super(`${path.basename(file)} 不是私有文件（权限或属主不符），已拒绝读取。`);
+    this.name = "NotPrivateFileError";
+  }
+}
+
+/**
  * A private file, opened and *judged by its own descriptor*.
  *
  * `openPrivateFile` refuses a link, a non-regular file and a foreign Windows DACL, but it says nothing about
@@ -446,7 +457,7 @@ export function openPrivateFileChecked(file: string, expectedUid: number | null 
   try {
     const st = fstatSync(fd);
     if (!privateModeMatches(st) || !privateOwnerMatches(st, expectedUid)) {
-      throw new Error(`${path.basename(file)} 不是私有文件（权限或属主不符），已拒绝读取。`);
+      throw new NotPrivateFileError(file);
     }
     return fd;
   } catch (error) {

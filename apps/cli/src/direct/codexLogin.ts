@@ -2,7 +2,8 @@ import { closeSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { checkCodexAuth } from "../codex/isolation.js";
-import { openPrivateFileChecked } from "../secrets/permissions.js";
+import { CodedError, TASK_ERROR, type CodeParams } from "@nema/shared";
+import { NotPrivateFileError, openPrivateFileChecked } from "../secrets/permissions.js";
 import type { StoredAuth } from "./authStore.js";
 import { decodeJwtPayload, jwtExp } from "./jwt.js";
 
@@ -13,9 +14,14 @@ import { decodeJwtPayload, jwtExp } from "./jwt.js";
 
 export const CODEX_AUTH_CLAIM = "https://api.openai.com/auth";
 
-export class CodexLoginError extends Error {
-  constructor(message: string) {
-    super(message);
+/**
+ * Coded (#299 batch 3a): each refusal has a code, so a task that fails on it is shown in the user's language.
+ * A refusal this module passes through from elsewhere (`checkCodexAuth`) has no code and keeps its text.
+ */
+export class CodexLoginError extends CodedError {
+  constructor(code: string | undefined, message: string, params?: CodeParams) {
+    // An empty code is not a code: `codedFields` drops it, so the failure is shown as text.
+    super(code ?? "", message, params);
     this.name = "CodexLoginError";
   }
 }
@@ -60,7 +66,7 @@ export type CodexCliTokens = { accessToken: string; refreshToken: string; accoun
  */
 export function readCodexCliTokens(codexHome: string, now = Date.now()): CodexCliTokens {
   const checked = checkCodexAuth(codexHome);
-  if (!checked.ok) throw new CodexLoginError(checked.error);
+  if (!checked.ok) throw new CodexLoginError(undefined, checked.error);
   let raw: string;
   try {
     const fd = openPrivateFileChecked(checked.authPath);
@@ -71,26 +77,37 @@ export function readCodexCliTokens(codexHome: string, now = Date.now()): CodexCl
     }
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
-    if (code === "ELOOP") throw new CodexLoginError(`Codex 登录文件 ${checked.authPath} 是符号链接，已拒绝读取。`);
-    throw new CodexLoginError(`无法读取 Codex 登录文件 ${checked.authPath}：${e instanceof Error ? e.message : String(e)}`);
+    const authPath = checked.authPath;
+    if (code === "ELOOP") throw new CodexLoginError(TASK_ERROR.codexLoginSymlink, `Codex 登录文件 ${authPath} 是符号链接，已拒绝读取。`, { path: authPath });
+    const why = e instanceof Error ? e.message : String(e);
+    // A file other users can read: its own code, so the reason is not the Chinese sentence inside `error`.
+    if (e instanceof NotPrivateFileError) throw new CodexLoginError(TASK_ERROR.codexLoginNotPrivate, `无法读取 Codex 登录文件 ${authPath}：${why}`, { path: authPath });
+    throw new CodexLoginError(TASK_ERROR.codexLoginUnreadable, `无法读取 Codex 登录文件 ${authPath}：${why}`, { path: authPath, error: why });
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    throw new CodexLoginError(`无法读取 Codex 登录文件 ${checked.authPath}：${e instanceof Error ? e.message : String(e)}`);
+    const why = e instanceof Error ? e.message : String(e);
+    throw new CodexLoginError(TASK_ERROR.codexLoginUnreadable, `无法读取 Codex 登录文件 ${checked.authPath}：${why}`, { path: checked.authPath, error: why });
   }
   const tokens = parsed && typeof parsed === "object" ? (parsed as { tokens?: unknown }).tokens : undefined;
   const access = tokens && typeof tokens === "object" ? (tokens as { access_token?: unknown }).access_token : undefined;
   const refresh = tokens && typeof tokens === "object" ? (tokens as { refresh_token?: unknown }).refresh_token : undefined;
   if (typeof access !== "string" || access === "" || typeof refresh !== "string" || refresh === "") {
-    throw new CodexLoginError(`Codex 登录文件 ${checked.authPath} 里没有可用的 access_token 和 refresh_token。请重新运行 codex login。`);
+    throw new CodexLoginError(
+      TASK_ERROR.codexLoginNoTokens,
+      `Codex 登录文件 ${checked.authPath} 里没有可用的 access_token 和 refresh_token。请重新运行 codex login。`,
+      { path: checked.authPath },
+    );
   }
   const exp = jwtExp(access);
   // Hermes import uses skew 0: only a numeric exp at or before now is expired. A missing exp is kept.
   if (exp !== null && exp * 1000 <= now) {
     throw new CodexLoginError(
+      TASK_ERROR.codexLoginExpired,
       `Codex 的 access token 已过期（${checked.authPath}）。请打开一次 Codex 让它刷新登录。Nema 只读取该文件，不会刷新，以免作废 Codex 自己的登录。`,
+      { path: checked.authPath },
     );
   }
   const accountId = authClaim(access).chatgpt_account_id;
@@ -108,7 +125,7 @@ export class CodexFileTokenSource {
     opts.signal?.throwIfAborted();
     const t = readCodexCliTokens(this.codexHome, this.now());
     if (opts.rejectedAccessToken !== undefined && t.accessToken === opts.rejectedAccessToken) {
-      throw new CodexLoginError("模型接口拒绝了当前的 Codex 登录。Nema 不会刷新 ~/.codex/auth.json。请在 Codex 里重新登录后再试。");
+      throw new CodexLoginError(TASK_ERROR.codexLoginRejected, "模型接口拒绝了当前的 Codex 登录。Nema 不会刷新 ~/.codex/auth.json。请在 Codex 里重新登录后再试。");
     }
     const auth: StoredAuth = {
       version: 1,

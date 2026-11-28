@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DAEMON_ERROR, HUB_ERROR, PROGRESS, SKILL_WARNING } from "@nema/shared";
+import { DAEMON_ERROR, EXCLUSION_REASONS, HUB_ERROR, PROGRESS, SKILL_WARNING, TASK_ERROR } from "@nema/shared";
 import { ERROR_KEY, hubErrorText, progressText, type ProgressLine } from "@/lib/errorText";
 import { HubError, listRepos } from "@/lib/hub";
 import { I18nProvider, useT } from "@/lib/i18n";
@@ -38,6 +38,38 @@ describe("error and progress codes (#299 batch 1)", () => {
         expect(copy[key], `${locale} ${key}`).toBeTruthy();
       }
       for (const code of [...Object.values(PROGRESS), ...Object.values(SKILL_WARNING)]) expect(copy[`progress.${code}`], `${locale} progress.${code}`).toBeTruthy();
+    }
+  });
+
+  it("every task failure code, exclusion reason and attachment kind has a message in all three catalogs (#299 batch 3a)", () => {
+    for (const locale of LOCALES) {
+      const copy = catalog(locale);
+      for (const code of Object.values(TASK_ERROR)) expect(copy[`error.${code}`], `${locale} error.${code}`).toBeTruthy();
+      for (const reason of EXCLUSION_REASONS) expect(copy[`route.exclusion.${reason}`], `${locale} route.exclusion.${reason}`).toContain("{accounts}");
+      for (const key of ["route.need.image", "route.need.pdf", "route.need.separator"]) expect(copy[key], `${locale} ${key}`).toBeTruthy();
+    }
+  });
+
+  it("the commands and config keys a task failure names are kept verbatim in every language", () => {
+    const verbatim: Record<string, string[]> = {
+      [TASK_ERROR.authNotLoggedIn]: ["nema auth login"],
+      [TASK_ERROR.authReloginRequired]: ["nema auth login"],
+      [TASK_ERROR.authLoginFileUnusable]: ["nema auth login"],
+      [TASK_ERROR.byokKeyMissing]: ["nema auth byok"],
+      [TASK_ERROR.byokKeyInvalid]: ["nema auth byok"],
+      [TASK_ERROR.byokModelRequired]: ["nema config set model <名称>"],
+      [TASK_ERROR.claudeTokenMissing]: ["claude setup-token", "nema auth claude"],
+      [TASK_ERROR.codexLoginMissing]: ["codex login"],
+      [TASK_ERROR.codexLoginNoTokens]: ["codex login"],
+      [TASK_ERROR.codexLoginRejected]: ["~/.codex/auth.json"],
+      [TASK_ERROR.configByokBaseUrl]: ["byokBaseUrl", "http://127.0.0.1", "http://localhost"],
+      [TASK_ERROR.accountsFileUnusable]: ["accounts.json"],
+    };
+    for (const locale of LOCALES) {
+      const copy = catalog(locale);
+      for (const [code, parts] of Object.entries(verbatim)) {
+        for (const part of parts) expect(copy[`error.${code}`], `${locale} error.${code}`).toContain(part);
+      }
     }
   });
 

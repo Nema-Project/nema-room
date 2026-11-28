@@ -1,3 +1,4 @@
+import { CodedError, TASK_ERROR } from "@nema/shared";
 import type { NemaConfig } from "../config.js";
 import { implicitAccount } from "../accounts/implicit.js";
 import { readAccounts } from "../accounts/store.js";
@@ -46,7 +47,7 @@ export function loadRoutingAccounts(nemaHome: string, config: NemaConfig, codexH
   const read = readAccounts(nemaHome);
   if (read.status === "unusable") {
     // The same reason vocabulary `loadAccounts` reports, so the settings page and this sentence agree.
-    throw new Error(UNUSABLE.replace("{reason}", read.reason));
+    throw new CodedError(TASK_ERROR.accountsFileUnusable, UNUSABLE.replace("{reason}", read.reason), { reason: read.reason });
   }
   if (read.status === "missing") {
     // First run, or a machine that never configured accounts: exactly what 0.2.0 did.

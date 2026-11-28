@@ -71,6 +71,13 @@ const DaemonToHubSchema = z.union([
      * hub cannot read.
      */
     route: z.unknown().optional(),
+    /**
+     * `error` is the fallback text. `errorCode` and `errorParams` (#299 batch 3a) let the UI localise it, as an
+     * RPC error's `code` / `params` do; optional, and unvalidated here so a field this hub cannot read costs the
+     * translation, not the failure. The hub reads them with `readCoded`.
+     */
+    errorCode: z.unknown().optional(),
+    errorParams: z.unknown().optional(),
   }),
   z.object({ type: z.literal("rpc.response"), id: z.string(), ok: z.literal(true), result: z.unknown() }),
   /*

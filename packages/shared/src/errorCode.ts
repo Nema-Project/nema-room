@@ -49,8 +49,8 @@ export function readCoded(code: unknown, params: unknown): { code?: string; para
 
 /** An error whose message is the fallback text and whose code the UI can localise. */
 export class CodedError extends Error {
-  constructor(readonly code: string, message: string, readonly params?: CodeParams) {
-    super(message);
+  constructor(readonly code: string, message: string, readonly params?: CodeParams, options?: ErrorOptions) {
+    super(message, options);
     this.name = "CodedError";
   }
 }
@@ -129,6 +129,70 @@ export const DAEMON_ERROR = {
   // Rendered with #297's `components.reason.offerChanged`, not an `error.` key of its own (see web errorText).
   componentOfferChanged: "components.offer-changed",
 } as const;
+
+/*
+ * Codes of a failed task's error (#299 batch 3a): routing, credentials and accounts. The daemon sends them in
+ * `task.finished` as `errorCode` / `errorParams`, the hub stores the code as the `task.failed` notice's
+ * `reason`, and the web shows `error.<code>`. `route.refusal.*` extends the `route.failure.*` vocabulary of
+ * #299 batch 1 with one code per `RouteRefusal`, kebab-cased because a code allows no underscore. A refusal
+ * worded more than one way (the synthesized account keeps 0.2.0's sentences and commands) has a code per wording.
+ */
+export const TASK_ERROR = {
+  routeAutoUnavailable: "route.refusal.auto-unavailable",
+  routeNoAccount: "route.refusal.no-account",
+  routeUnknownAccount: "route.refusal.unknown-account",
+  routeAdapterMismatch: "route.refusal.adapter-mismatch",
+  routeCredentialMissing: "route.refusal.credential-missing",
+  routeCredentialUnusable: "route.refusal.credential-unusable",
+  routeModelMissing: "route.refusal.model-missing",
+  /** No candidate, and no account was set aside. */
+  routeNoCandidate: "route.refusal.no-candidate",
+  /** No candidate. The accounts set aside are in params keyed by their `Excluded` reason (`EXCLUSION_REASONS`). */
+  routeNoCandidateExcluded: "route.refusal.no-candidate-excluded",
+  /** No account declares what the attachments need. `needs` is `image`, `pdf` or `image,pdf`. */
+  routeNoCapableAccount: "route.refusal.no-capable-account",
+  accountsFileUnusable: "accounts.file-unusable",
+  accountsDirSymlink: "accounts.dir-symlink",
+  accountCredentialMissing: "accounts.credential-missing",
+  accountCredentialInvalid: "accounts.credential-invalid",
+  configInvalidJson: "config.invalid-json",
+  configInvalid: "config.invalid",
+  configByokBaseUrl: "config.byok-base-url-invalid",
+  configUnreadable: "config.unreadable",
+  authNotLoggedIn: "auth.not-logged-in",
+  authReloginRequired: "auth.relogin-required",
+  authLoginFileUnusable: "auth.login-file-unusable",
+  authRefreshRateLimited: "auth.refresh-rate-limited",
+  authRefreshRateLimitedFor: "auth.refresh-rate-limited-for",
+  authLockTimedOut: "auth.lock-timed-out",
+  authRefreshTimedOut: "auth.refresh-timed-out",
+  authRefreshNoAccessToken: "auth.refresh-no-access-token",
+  authRefreshHttp: "auth.refresh-http",
+  authRefreshFailed: "auth.refresh-failed",
+  byokKeyMissing: "auth.byok-key-missing",
+  byokKeyInvalid: "auth.byok-key-invalid",
+  byokKeySymlink: "auth.byok-key-symlink",
+  byokKeyMode: "auth.byok-key-mode",
+  byokModelRequired: "auth.byok-model-required",
+  claudeTokenMissing: "auth.claude-token-missing",
+  claudeTokenSymlink: "auth.claude-token-symlink",
+  claudeTokenMode: "auth.claude-token-mode",
+  codexLoginMissing: "auth.codex-login-missing",
+  codexLoginSymlink: "auth.codex-login-symlink",
+  codexLoginNotPrivate: "auth.codex-login-not-private",
+  codexLoginUnreadable: "auth.codex-login-unreadable",
+  codexLoginNoTokens: "auth.codex-login-no-tokens",
+  codexLoginExpired: "auth.codex-login-expired",
+  codexLoginRejected: "auth.codex-login-rejected",
+  secretFileSymlink: "secret.file-symlink",
+  secretFileMode: "secret.file-mode",
+} as const;
+
+/**
+ * Why automatic routing set an account aside (`Excluded["reason"]` in the CLI). `route.refusal.no-candidate-excluded`
+ * carries one param per reason that occurred, holding the names of the accounts set aside for it.
+ */
+export const EXCLUSION_REASONS = ["disabled", "credential_missing", "credential_unusable", "compat_unreadable", "cooling", "capability", "model_missing"] as const;
 
 /** Codes of progress and tool-call lines a running task shows (`progress.<code>` in the web catalog). */
 export const PROGRESS = {
