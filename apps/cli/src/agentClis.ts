@@ -25,7 +25,8 @@ export const AGENT_CLIS: ReadonlyArray<{ id: AgentCliId; command: string; instal
 const VERSION_TIMEOUT_MS = 10_000;
 /** Grace after SIGTERM before SIGKILL: long enough for a running child that traps the signal to exit
  * (signal handling is immediate for a process that is already running), short enough that a child
- * ignoring the signal is killed promptly. The probe always ends by timeout + grace. */
+ * ignoring the signal is killed promptly. The probe always ends by timeout + grace, even when a
+ * descendant holds the inherited pipes open (see runVersion). */
 const VERSION_KILL_GRACE_MS = 250;
 
 /** Runs `<command> --version` and resolves with its stdout; rejects with the spawn error as Node reports it. */
@@ -34,17 +35,44 @@ export type VersionRunner = (command: string) => Promise<string>;
 export async function runVersion(command: string, timeoutMs: number = VERSION_TIMEOUT_MS): Promise<string> {
   const spec = commandSpec(command, ["--version"]);
   return new Promise<string>((resolve, reject) => {
+    let settled = false;
     let timedOut = false;
     let timer: NodeJS.Timeout | undefined;
     let graceTimer: NodeJS.Timeout | undefined;
-    const child = execFile(spec.bin, spec.args, { windowsHide: true }, (error, stdout) => {
+    // execFile's callback waits for the stdio pipes to close, so a descendant that inherits
+    // stdout/stderr can hold it open long after the direct child is gone. Collect stdout
+    // ourselves so the probe can settle on the direct child's exit instead.
+    let stdout = "";
+    const clearTimers = () => {
       if (timer !== undefined) clearTimeout(timer);
       if (graceTimer !== undefined) clearTimeout(graceTimer);
-      if (!error) return resolve(stdout);
-      if (timedOut) {
-        return reject(Object.assign(new Error(`Command timed out after ${timeoutMs}ms: ${spec.bin} --version`), { killed: true, signal: "SIGTERM" }));
-      }
+    };
+    const timeoutError = () => Object.assign(new Error(`Command timed out after ${timeoutMs}ms: ${spec.bin} --version`), { killed: true, signal: "SIGTERM" });
+    const child = execFile(spec.bin, spec.args, { windowsHide: true }, (error, out) => {
+      if (settled) return;
+      settled = true;
+      clearTimers();
+      if (!error) return resolve(out);
+      if (timedOut) return reject(timeoutError());
       reject(error);
+    });
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.once("exit", (code) => {
+      // After the deadline fired, settle on the direct child's exit: `exit` fires when the child
+      // terminates, while the callback above can lag behind until a descendant closes the
+      // inherited pipes. A child that exits 0 on the signal still resolves (D-7); anything else
+      // is a timeout. The version line is printed at startup, so by the deadline it has arrived.
+      if (settled || !timedOut) return;
+      settled = true;
+      clearTimers();
+      // Release our side of the pipes: a descendant may still hold them open, and the late
+      // execFile callback is ignored via `settled`.
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      if (code === 0) return resolve(stdout);
+      reject(timeoutError());
     });
     timer = setTimeout(() => {
       // The deadline, not the exit: ask the child to stop, then force it. The wait stays bounded even
@@ -52,7 +80,19 @@ export async function runVersion(command: string, timeoutMs: number = VERSION_TI
       // that is what execFile's own timeout reports, and the old `agents.detect` depends on it (D-7).
       timedOut = true;
       child.kill("SIGTERM");
-      graceTimer = setTimeout(() => child.kill("SIGKILL"), VERSION_KILL_GRACE_MS);
+      graceTimer = setTimeout(() => {
+        // Bound the wait even when the child never exits on its own: settle the timeout here
+        // instead of waiting for execFile's callback, which a descendant holding the inherited
+        // pipes can delay indefinitely. Release our side of the pipes; the late callback is
+        // ignored via `settled`.
+        if (settled) return;
+        settled = true;
+        clearTimers();
+        child.kill("SIGKILL");
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        reject(timeoutError());
+      }, VERSION_KILL_GRACE_MS);
     }, timeoutMs);
   });
 }

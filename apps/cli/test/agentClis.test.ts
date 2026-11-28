@@ -48,7 +48,9 @@ describe("runVersion: the deadline bounds the wait without changing a successful
   // Synthetic node children, not agent CLIs; the timeout is shortened to 500ms through runVersion's
   // second parameter (long enough for a node child to start under load) so these cases do not wait
   // out the real 10s probe timeout.
-  test("a child that traps SIGTERM and exits 0 after the timer fired is still ok (D-7: base execFile behavior)", async () => {
+  // Node documents that ChildProcess.kill('SIGTERM') force-terminates the process on Windows, so a
+  // handler that runs on the signal can never execute there; these cases only run on POSIX.
+  test.runIf(process.platform !== "win32")("a child that traps SIGTERM and exits 0 after the timer fired is still ok (D-7: base execFile behavior)", async () => {
     const script = path.join(root, "trap-sigterm.cjs");
     writeFileSync(script, "process.on('SIGTERM', () => process.exit(0));\nsetTimeout(() => {}, 5000);\n");
     await expect(executeVersion((command) => runVersion(command, 500))(script)).resolves.toEqual({ kind: "ok", version: null });
@@ -70,6 +72,34 @@ describe("runVersion: the deadline bounds the wait without changing a successful
     const script = path.join(root, "fast.cjs");
     writeFileSync(script, "process.stdout.write('9.9.9\\n');\n");
     await expect(executeVersion((command) => runVersion(command, 500))(script)).resolves.toEqual({ kind: "ok", version: "9.9.9" });
+  });
+  // A descendant that inherits stdout/stderr holds execFile's callback open until it exits, so the
+  // probe must settle on the direct child's exit (or the kill grace), not on the pipes closing.
+  // The grandchild lives 5s: without the bound the probe would take ~5s, not ~750ms.
+  test.runIf(process.platform !== "win32")("a child that ignores SIGTERM is a timeout within the kill grace even when a descendant holds the pipes", async () => {
+    const script = path.join(root, "launcher-ignore.cjs");
+    writeFileSync(
+      script,
+      "const { spawn } = require('node:child_process');\n" +
+        "spawn(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], { stdio: 'inherit' });\n" +
+        "process.on('SIGTERM', () => {});\nsetTimeout(() => {}, 5000);\n",
+    );
+    const start = Date.now();
+    await expect(executeVersion((command) => runVersion(command, 500))(script)).resolves.toEqual({ kind: "timeout" });
+    expect(Date.now() - start).toBeLessThan(2000);
+  });
+  test.runIf(process.platform !== "win32")("a child that exits 0 on SIGTERM is still ok even when a descendant holds the pipes", async () => {
+    const script = path.join(root, "launcher-trap.cjs");
+    writeFileSync(
+      script,
+      "const { spawn } = require('node:child_process');\n" +
+        "spawn(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], { stdio: 'inherit' });\n" +
+        "process.stdout.write('9.9.9\\n');\n" +
+        "process.on('SIGTERM', () => process.exit(0));\nsetTimeout(() => {}, 5000);\n",
+    );
+    const start = Date.now();
+    await expect(executeVersion((command) => runVersion(command, 500))(script)).resolves.toEqual({ kind: "ok", version: "9.9.9" });
+    expect(Date.now() - start).toBeLessThan(2000);
   });
 });
 
